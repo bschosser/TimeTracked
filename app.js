@@ -1,9 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
-const isToday = (stamp) => new Date(stamp).toDateString() === new Date().toDateString();
 const dayKey = (stamp) => new Date(stamp).toLocaleDateString("en-CA");
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
 const maxCarryMinutes = 4 * 60;
+let selectedDayKey = dayKey(new Date());
+let availableDayKeys = [];
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
 
@@ -18,13 +19,15 @@ function durationMinutes(samples, index, interval) {
 function renderStatus(payload) {
   const current = payload.current;
   $("mail-label").textContent = payload.mail_app;
+  const signalAppInput = $("signal-app-name");
+  if (signalAppInput && document.activeElement !== signalAppInput) signalAppInput.value = payload.mail_app;
   $("interval").textContent = payload.interval;
-  $("mail-state").textContent = current.mail_open ? "Working" : "Paused";
+  $("mail-state").textContent = current.mail_open ? "Open" : "Closed";
   $("mail-state").style.color = current.mail_open ? "#fa896f" : "#9ca9a4";
   $("pause-button").textContent = payload.paused ? "Resume tracking" : "Pause tracking";
   $("pause-button").classList.toggle("paused", payload.paused);
   if (payload.paused) showPauseOverlay(); else hidePauseOverlay();
-  $("state-note").textContent = payload.paused ? "Manual pause is active" : current.working ? "Working time is being recorded" : "A pause is being recorded";
+  $("state-note").textContent = payload.paused ? "Manual pause is active" : current.working ? `Counting time while ${payload.mail_app} is open` : `${payload.mail_app} is not open`;
   $("last-updated").textContent = `Updated ${new Date(current.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
@@ -104,7 +107,27 @@ function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEnd
 
 function renderHistory(payload) {
   const allSamples = payload.samples;
-  const samples = allSamples.filter((sample) => isToday(sample.timestamp));
+  const todayKey = dayKey(new Date());
+  availableDayKeys = Array.from(new Set([
+    todayKey,
+    ...allSamples.filter(sampleWorking).map((sample) => dayKey(sample.timestamp)),
+  ])).filter((key) => key <= todayKey).sort();
+  if (!availableDayKeys.includes(selectedDayKey)) {
+    selectedDayKey = availableDayKeys.filter((key) => key < selectedDayKey).at(-1) || todayKey;
+  }
+  const dayIndex = availableDayKeys.indexOf(selectedDayKey);
+  $("previous-day").disabled = dayIndex <= 0;
+  $("next-day").disabled = dayIndex < 0 || dayIndex >= availableDayKeys.length - 1;
+  const isSelectedToday = selectedDayKey === todayKey;
+  const selectedDate = new Date(`${selectedDayKey}T12:00:00`);
+  const selectedLabel = isSelectedToday ? "Today" : selectedDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  $("daily-title").textContent = isSelectedToday ? "Today at a glance" : `${selectedLabel} at a glance`;
+  $("daily-estimate-label").textContent = `Working estimate · ${selectedLabel}`;
+  $("today-label").textContent = selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+  $("daily-hours-label").textContent = selectedLabel;
+  $("manual-break-tools").hidden = !isSelectedToday;
+
+  const samples = allSamples.filter((sample) => dayKey(sample.timestamp) === selectedDayKey);
   const minutes = samples.reduce((total, sample, index) => total + (sampleWorking(sample) ? durationMinutes(samples, index, payload.interval) : 0), 0);
   const observedMinutes = samples.reduce((total, sample, index) => total + durationMinutes(samples, index, payload.interval), 0);
   const percent = observedMinutes ? Math.round((minutes / observedMinutes) * 100) : 0;
@@ -132,7 +155,13 @@ function renderHistory(payload) {
   $("break-count").textContent = samples.length ? manualBreaks : "--";
   const timeline = $("timeline");
   timeline.replaceChildren();
-  if (!samples.length) { timeline.innerHTML = '<div class="empty">Your first day will draw itself here.</div>'; return; }
+  if (!samples.length) {
+    timeline.innerHTML = '<div class="empty">No work samples for this day.</div>';
+    ["axis-start", "axis-quarter", "axis-mid", "axis-three-quarter", "axis-end"].forEach((id) => { $(id).textContent = "--"; });
+    renderAverageDay(payload);
+    renderWeek(payload);
+    return;
+  }
   const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, working: 0 }));
   samples.forEach((sample, index) => {
     const minutesInSample = durationMinutes(samples, index, payload.interval);
@@ -148,15 +177,6 @@ function renderHistory(payload) {
       if (sampleWorking(sample)) hours[hour].working += slice / 60000;
       cursor = nextHour;
     }
-  });
-  hours.forEach(({ hour, total, working }) => {
-    const bar = document.createElement("span");
-    const observedShare = total ? working / total : 0;
-    const workingShare = working / 60;
-    bar.className = `bar${working ? " working" : ""}`;
-    bar.style.height = `${Math.min(workingShare * 100, 100)}%`;
-    bar.title = `${hour}:00–${hour + 1}:00 · ${working ? `${working.toFixed(1)} working minutes` : total ? "0 working minutes" : "Not observed"}${total && observedShare < 0.99 ? ` (${Math.round(observedShare * 100)}% of observed)` : ""}`;
-    timeline.appendChild(bar);
   });
   const workingSamples = samples.filter((sample) => sampleWorking(sample));
   const firstObservedHour = new Date(samples[0].timestamp).getHours();
@@ -283,6 +303,14 @@ function startOfWeek(date) {
   return result;
 }
 
+function moveSelectedDay(direction) {
+  const index = availableDayKeys.indexOf(selectedDayKey);
+  const target = availableDayKeys[index + direction];
+  if (!target) return;
+  selectedDayKey = target;
+  refresh();
+}
+
 function renderWeek(payload) {
   const weekStart = startOfWeek(new Date(Date.now() + selectedWeekOffset * 7 * 24 * 60 * 60 * 1000));
   const weekEnd = new Date(weekStart);
@@ -384,6 +412,41 @@ function setManualBreakFormOpen(open) {
   }
 }
 
+function setSignalAppFormOpen(open) {
+  const form = $("signal-app-form");
+  form.hidden = !open;
+  $("signal-app-toggle").setAttribute("aria-expanded", String(open));
+  if (open) {
+    $("signal-app-name").focus();
+    $("signal-app-name").select();
+  }
+}
+
+async function saveSignalApp(event) {
+  event.preventDefault();
+  const form = $("signal-app-form");
+  const button = form.querySelector("[type=submit]");
+  const message = $("signal-app-message");
+  const appName = $("signal-app-name").value.trim();
+  if (!appName) { message.textContent = "Enter the app's process name."; return; }
+
+  button.disabled = true;
+  message.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mail_app: appName }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not change the work signal.");
+    message.textContent = `Now watching ${result.mail_app}.`;
+    await refresh();
+  } catch (error) {
+    message.textContent = error.message || "Could not change the work signal.";
+  } finally { button.disabled = false; }
+}
+
 async function addManualBreak(event) {
   event.preventDefault();
   const message = $("manual-break-message");
@@ -424,13 +487,17 @@ async function refresh() {
   } catch { $("last-updated").textContent = "Tracker offline"; }
 }
 
-$("today-label").textContent = new Date().toLocaleDateString([], { month: "short", day: "numeric" });
 $("pause-button").addEventListener("click", pauseTracking);
 $("overlay-break").addEventListener("click", () => resumeTracking(true));
 $("overlay-work").addEventListener("click", () => resumeTracking(false));
+$("today-label").textContent = new Date().toLocaleDateString([], { month: "short", day: "numeric" });
+$("previous-day").addEventListener("click", () => moveSelectedDay(-1));
+$("next-day").addEventListener("click", () => moveSelectedDay(1));
 $("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; refresh(); });
 $("next-week").addEventListener("click", () => { selectedWeekOffset += 1; refresh(); });
 $("average-window").addEventListener("change", (event) => { averageWindowDays = Number(event.target.value); refresh(); });
+$("signal-app-toggle").addEventListener("click", () => setSignalAppFormOpen($("signal-app-form").hidden));
+$("signal-app-form").addEventListener("submit", saveSignalApp);
 $("manual-break-toggle").addEventListener("click", () => setManualBreakFormOpen($("manual-break-form").hidden));
 $("manual-break-cancel").addEventListener("click", () => setManualBreakFormOpen(false));
 $("manual-break-form").addEventListener("submit", addManualBreak);

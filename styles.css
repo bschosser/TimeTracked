@@ -59,3 +59,22 @@ body:before { content:""; display:block; height:9px; background:var(--ink); }
 .manual-break-submit { background:var(--mint); border-color:var(--mint); color:var(--ink); }
 .manual-break-form button:disabled { opacity:.55; cursor:wait; }
 @media (max-width:700px) { .manual-break-form { justify-content:flex-start; }.manual-break-form p { flex-basis:100%; }.manual-break-form #manual-break-message { flex-basis:100%; } }
+
+.daily-controls { display:flex; align-items:center; gap:16px; }
+.day-controls { display:flex; gap:8px; }
+.day-controls button { width:40px; height:36px; border:1px solid var(--line); background:transparent; color:var(--ink); font-size:20px; cursor:pointer; }
+.day-controls button:hover:not(:disabled) { background:var(--sun); border-color:var(--sun); }
+.day-controls button:disabled { color:#b8c2bd; cursor:default; }
+.app-icon { color:var(--coral); font-size:13px; }
+.signal-app-toggle { margin-top:12px; padding:6px 9px; border:1px solid #465250; background:transparent; color:var(--sun); font:10px 'DM Mono',monospace; text-transform:uppercase; cursor:pointer; }
+.signal-app-toggle:hover { border-color:var(--sun); }
+.signal-app-form { display:grid; gap:7px; margin-top:10px; padding:10px; border:1px solid #465250; background:#202d2f; }
+.signal-app-form[hidden] { display:none; }
+.signal-app-form label,.signal-app-form small,.signal-app-form #signal-app-message { color:#bdc8c3; font:10px 'DM Mono',monospace; }
+.signal-app-form > div { display:flex; gap:6px; }
+.signal-app-form input { min-width:0; flex:1; padding:7px; border:1px solid #52615d; background:#172326; color:#fff; font:12px 'DM Mono',monospace; }
+.signal-app-form button { padding:7px 9px; border:0; background:var(--sun); color:var(--ink); font:600 10px 'DM Mono',monospace; text-transform:uppercase; cursor:pointer; }
+.signal-app-form button:disabled { opacity:.55; cursor:wait; }
+.signal-app-form code { color:#fff; }
+.daily-controls .legend { margin-top:0; }
+@media (max-width:700px) { .daily-controls { justify-content:space-between; margin-top:18px; }.signal-app-form { grid-template-columns:1fr; } }

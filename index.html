@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Desk signal</title>
-  <link rel="stylesheet" href="styles.css?v=20261022-1">
-  <script defer src="app.js?v=20261022-1"></script>
+  <link rel="stylesheet" href="styles.css?v=20261116-1">
+  <script defer src="app.js?v=20261116-1"></script>
 </head>
 <body>
   <div id="pause-overlay" class="pause-overlay" aria-hidden="true">
@@ -33,27 +33,34 @@
 
     <section class="hero-grid">
       <article class="score-panel">
-        <div class="panel-kicker">Working estimate · today</div>
+        <div class="panel-kicker" id="daily-estimate-label">Working estimate · today</div>
         <div class="score-row"><strong id="working-hours">--</strong><span>hours</span></div>
         <div class="meter"><span id="working-meter"></span></div>
         <div class="score-foot"><span id="working-percent">Collecting your first signal</span><span id="sample-count">-- samples</span></div>
       </article>
       <article class="signals-panel">
         <div class="panel-kicker">Right now</div>
-        <div class="signal-line"><span class="signal-icon mail-icon">@</span><span id="mail-label">Working</span><b id="mail-state">Checking</b></div>
+        <div class="signal-line"><span class="signal-icon app-icon">●</span><span id="mail-label">Mail</span><b id="mail-state">Checking</b></div>
+        <button id="signal-app-toggle" class="signal-app-toggle" type="button" aria-expanded="false" aria-controls="signal-app-form">Change app</button>
+        <form id="signal-app-form" class="signal-app-form" hidden>
+          <label for="signal-app-name">App process name</label>
+          <div><input id="signal-app-name" type="text" maxlength="100" required><button type="submit">Use app</button></div>
+          <small>Use the exact process name, such as <code>Code</code> or <code>Xcode</code>.</small>
+          <span id="signal-app-message" role="status" aria-live="polite"></span>
+        </form>
         <div class="state-note" id="state-note">Waiting for the first reading</div>
         <button id="pause-button" class="pause-button" type="button">Pause tracking</button>
       </article>
     </section>
 
     <section class="stats-grid">
-      <article><p class="eyebrow">Today</p><strong id="today-hours">--</strong><span>hours estimated</span></article>
+      <article><p class="eyebrow" id="daily-hours-label">Today</p><strong id="today-hours">--</strong><span>hours estimated</span></article>
       <article><p class="eyebrow">7-day average</p><strong id="average-hours">--</strong><span>hours per working day</span></article>
       <article><p class="eyebrow">7-day average break</p><strong id="average-break-hours">--</strong><span>hours per working day</span></article>
     </section>
 
     <section class="timeline-section">
-      <div class="section-heading"><div><p class="eyebrow">Signal timeline</p><h2>Today at a glance</h2></div><span class="legend"><i class="working-dot"></i> working <i class="idle-dot"></i> not working</span></div>
+      <div class="section-heading"><div><p class="eyebrow">Signal timeline</p><h2 id="daily-title">Today at a glance</h2></div><div class="daily-controls"><span class="legend"><i class="working-dot"></i> working <i class="idle-dot"></i> not working</span><div class="day-controls"><button id="previous-day" type="button" aria-label="Previous working day">←</button><button id="next-day" type="button" aria-label="Next working day">→</button></div></div></div>
       <div class="timeline-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="timeline" class="timeline"><div class="empty">Your first day will draw itself here.</div></div></div>
       <div class="time-axis"><span id="axis-start">--</span><span id="axis-quarter">--</span><span id="axis-mid">--</span><span id="axis-three-quarter">--</span><span id="axis-end">--</span></div>
       <p class="chart-note">Bars show working minutes by hour. The green line carries the latest state for up to four hours; longer gaps are unobserved and do not count as work.</p>
@@ -73,7 +80,7 @@
     </section>
 
     <section class="break-section"><div><p class="eyebrow">Breathing room</p><h2>Breaks are part of the record.</h2></div><div class="break-stat"><strong id="break-count">--</strong><span>manual pauses<br>today</span></div></section>
-    <section class="manual-break-tools">
+    <section class="manual-break-tools" id="manual-break-tools">
       <button id="manual-break-toggle" class="manual-break-toggle" type="button" aria-expanded="false" aria-controls="manual-break-form">Add a missed break</button>
       <form id="manual-break-form" class="manual-break-form" hidden>
         <p>Record a break for today</p>

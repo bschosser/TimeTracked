@@ -17,12 +17,17 @@ ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
 HISTORY_FILE = DATA_DIR / "samples.jsonl"
 PAUSE_FILE = DATA_DIR / "pause.json"
+SETTINGS_FILE = DATA_DIR / "settings.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
-MAIL_APP = os.getenv("MAIL_APP", "Mail")
+DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 HISTORY_LOCK = threading.RLock()
 
 
 class ManualBreakError(ValueError):
+    pass
+
+
+class SignalAppError(ValueError):
     pass
 
 
@@ -34,8 +39,30 @@ def command_output(command: list[str]) -> str:
         return ""
 
 
-def is_mail_open() -> bool:
-    result = subprocess.run(["pgrep", "-x", MAIL_APP], capture_output=True, timeout=3)
+def signal_app() -> str:
+    try:
+        settings = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+        configured = settings.get("mail_app") if isinstance(settings, dict) else None
+        if isinstance(configured, str) and configured.strip():
+            return configured.strip()
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+    return DEFAULT_MAIL_APP
+
+
+def set_signal_app(value: object) -> str:
+    if not isinstance(value, str):
+        raise SignalAppError("Enter the app's process name.")
+    name = value.strip()
+    if not name or len(name) > 100 or any(char in name for char in "\r\n\0"):
+        raise SignalAppError("Enter a valid app process name (1–100 characters).")
+    DATA_DIR.mkdir(exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps({"mail_app": name}), encoding="utf-8")
+    return name
+
+
+def is_app_open(app_name: str) -> bool:
+    result = subprocess.run(["pgrep", "-x", app_name], capture_output=True, timeout=3)
     return result.returncode == 0
 
 
@@ -70,13 +97,15 @@ def reclassify_pause(started_at: str | None) -> None:
 
 
 def sample() -> dict:
-    mail_open = is_mail_open()
+    app_name = signal_app()
+    mail_open = is_app_open(app_name)
     paused = is_paused()
     return {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mail_open": mail_open,
         "working": mail_open and not paused,
         "paused": paused,
+        "signal_app": app_name,
     }
 
 
@@ -217,7 +246,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/status":
             records = read_history()
-            self.send_json({"current": records[-1] if records else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": MAIL_APP, "paused": is_paused()})
+            self.send_json({"current": records[-1] if records else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": signal_app(), "paused": is_paused()})
+            return
+        if path == "/api/settings":
+            self.send_json({"mail_app": signal_app()})
             return
         if path == "/api/history":
             self.send_json({"samples": read_history(), "interval": INTERVAL_SECONDS})
@@ -226,6 +258,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/settings":
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            try:
+                request = json.loads(body or b"{}")
+                if not isinstance(request, dict):
+                    raise SignalAppError("Enter the app's process name.")
+                app_name = set_signal_app(request.get("mail_app"))
+            except (json.JSONDecodeError, SignalAppError) as error:
+                self.send_json({"error": str(error) or "Enter the app's process name."}, status=400)
+                return
+            self.send_json({"ok": True, "mail_app": app_name, "sample": append_sample()})
+            return
         if path == "/api/manual-break":
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
             try:
@@ -276,7 +320,7 @@ if __name__ == "__main__":
     threading.Thread(target=sampler_loop, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"Working hours tracker running at http://127.0.0.1:{port}")
-    print(f"Sampling every {INTERVAL_SECONDS}s; watching {MAIL_APP}")
+    print(f"Sampling every {INTERVAL_SECONDS}s; watching {signal_app()}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
