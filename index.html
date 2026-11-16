@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Desk signal</title>
+  <link rel="stylesheet" href="styles.css?v=20261015-1">
+  <script defer src="app.js?v=20261015-1"></script>
+</head>
+<body>
+  <div id="pause-overlay" class="pause-overlay" aria-hidden="true">
+    <div class="pause-card" role="dialog" aria-modal="true" aria-labelledby="pause-title">
+      <div class="espresso-art" aria-hidden="true"><span class="steam steam-one"></span><span class="steam steam-two"></span><span class="steam steam-three"></span><span class="cup-handle"></span><span class="cup"><span class="rim"><span class="coffee"></span></span></span><span class="saucer"></span></div>
+      <p class="eyebrow">Break mode</p>
+      <h2 id="pause-title">Tracking paused</h2>
+      <p>Was this actually a break, or did work follow you there?</p>
+      <div class="pause-actions"><button id="overlay-break" class="overlay-resume" type="button">Yes, it was a break</button><button id="overlay-work" class="overlay-work" type="button">No, count it as work</button></div>
+    </div>
+  </div>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark"></span><span>desk signal</span></div>
+      <div class="live"><span class="pulse"></span><span id="last-updated">Connecting...</span></div>
+    </header>
+
+    <section class="intro">
+      <div>
+        <p class="eyebrow">Personal time ledger <span id="today-label"></span></p>
+        <h1>Time, Tracked</h1>
+      </div>
+      <p class="intro-copy">A quiet estimate of working time, with a local pause switch. Nothing leaves this Mac.</p>
+    </section>
+
+    <section class="hero-grid">
+      <article class="score-panel">
+        <div class="panel-kicker">Working estimate · today</div>
+        <div class="score-row"><strong id="working-hours">--</strong><span>hours</span></div>
+        <div class="meter"><span id="working-meter"></span></div>
+        <div class="score-foot"><span id="working-percent">Collecting your first signal</span><span id="sample-count">-- samples</span></div>
+      </article>
+      <article class="signals-panel">
+        <div class="panel-kicker">Right now</div>
+        <div class="signal-line"><span class="signal-icon mail-icon">@</span><span id="mail-label">Working</span><b id="mail-state">Checking</b></div>
+        <div class="state-note" id="state-note">Waiting for the first reading</div>
+        <button id="pause-button" class="pause-button" type="button">Pause tracking</button>
+      </article>
+    </section>
+
+    <section class="stats-grid">
+      <article><p class="eyebrow">Today</p><strong id="today-hours">--</strong><span>hours estimated</span></article>
+      <article><p class="eyebrow">7-day average</p><strong id="average-hours">--</strong><span>hours per working day</span></article>
+      <article><p class="eyebrow">7-day average break</p><strong id="average-break-hours">--</strong><span>hours per working day</span></article>
+    </section>
+
+    <section class="timeline-section">
+      <div class="section-heading"><div><p class="eyebrow">Signal timeline</p><h2>Today at a glance</h2></div><span class="legend"><i class="working-dot"></i> working <i class="idle-dot"></i> not working</span></div>
+      <div class="timeline-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="timeline" class="timeline"><div class="empty">Your first day will draw itself here.</div></div></div>
+      <div class="time-axis"><span id="axis-start">--</span><span id="axis-quarter">--</span><span id="axis-mid">--</span><span id="axis-three-quarter">--</span><span id="axis-end">--</span></div>
+      <p class="chart-note">Bars show working minutes by hour. The green line tracks working or not working over the day, including sleep gaps of up to 8 hours.</p>
+    </section>
+
+    <section class="average-day-section">
+      <div class="section-heading"><div><p class="eyebrow">Average day</p><h2>Typical working pattern</h2></div><div class="average-controls"><label for="average-window">Window</label><select id="average-window"><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="90">90 days</option></select><span class="legend"><i class="average-line-dot"></i> average <i class="average-band-dot"></i> variation</span></div></div>
+      <div class="average-day-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="average-day-chart" class="average-day-chart"><div class="empty">Not enough history yet.</div></div></div>
+      <div class="time-axis average-axis"><span id="average-axis-start">--</span><span id="average-axis-quarter">--</span><span id="average-axis-mid">--</span><span id="average-axis-three-quarter">--</span><span id="average-axis-end">--</span></div>
+      <p class="chart-note">Average working state over the selected completed days, excluding today and days with no recorded work. The shaded band shows one standard deviation between working days.</p>
+    </section>
+
+    <section class="week-section">
+      <div class="section-heading"><div><p class="eyebrow">Weekly history</p><h2 id="week-title">This week</h2></div><div class="week-controls"><span class="legend week-legend"><i class="working-dot"></i> working <i class="break-dot"></i> breaks</span><button id="previous-week" type="button" aria-label="Previous week">←</button><button id="next-week" type="button" aria-label="Next week">→</button></div></div>
+      <div class="week-chart-wrap"><div class="week-y-labels"><span id="week-y-max">--</span><span id="week-y-mid">--</span><span>0h</span></div><div id="week-chart" class="week-chart"></div></div>
+      <div class="week-summary"><strong id="week-average">--</strong><span>average hours<br>per working day</span><span id="week-total">-- total hours</span></div>
+    </section>
+
+    <section class="break-section"><div><p class="eyebrow">Breathing room</p><h2>Breaks are part of the record.</h2></div><div class="break-stat"><strong id="break-count">--</strong><span>manual pauses<br>today</span></div></section>
+    <footer><span>Local only · sampling every <b id="interval">60</b> sec</span><span>Working signal</span></footer>
+  </main>
+</body>
+</html>
