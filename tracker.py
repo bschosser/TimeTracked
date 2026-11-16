@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
+from uuid import uuid4
 
 ROOT = Path(__file__).parent
 DATA_DIR = ROOT / "data"
@@ -18,6 +19,11 @@ HISTORY_FILE = DATA_DIR / "samples.jsonl"
 PAUSE_FILE = DATA_DIR / "pause.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 MAIL_APP = os.getenv("MAIL_APP", "Mail")
+HISTORY_LOCK = threading.RLock()
+
+
+class ManualBreakError(ValueError):
+    pass
 
 
 def command_output(command: list[str]) -> str:
@@ -50,16 +56,17 @@ def pause_started_at() -> str | None:
 def reclassify_pause(started_at: str | None) -> None:
     if not started_at or not HISTORY_FILE.exists():
         return
-    records = read_history()
-    changed = False
-    for record in records:
-        if record.get("timestamp", "") >= started_at and record.get("paused"):
-            record["paused"] = False
-            record["working"] = record.get("mail_open", False)
-            changed = True
-    if changed:
-        with HISTORY_FILE.open("w", encoding="utf-8") as history:
-            history.writelines(json.dumps(record) + "\n" for record in records)
+    with HISTORY_LOCK:
+        records = read_history()
+        changed = False
+        for record in records:
+            if record.get("timestamp", "") >= started_at and record.get("paused") and not record.get("manual_break"):
+                record["paused"] = False
+                record["working"] = record.get("mail_open", False)
+                changed = True
+        if changed:
+            with HISTORY_FILE.open("w", encoding="utf-8") as history:
+                history.writelines(json.dumps(record) + "\n" for record in records)
 
 
 def sample() -> dict:
@@ -74,24 +81,126 @@ def sample() -> dict:
 
 
 def append_sample() -> dict:
-    record = sample()
     DATA_DIR.mkdir(exist_ok=True)
-    with HISTORY_FILE.open("a", encoding="utf-8") as history:
-        history.write(json.dumps(record) + "\n")
+    with HISTORY_LOCK:
+        record = sample()
+        with HISTORY_FILE.open("a", encoding="utf-8") as history:
+            history.write(json.dumps(record) + "\n")
     return record
 
 
-def read_history() -> list[dict]:
+def read_history_file() -> list[dict]:
     if not HISTORY_FILE.exists():
         return []
     records = []
-    with HISTORY_FILE.open(encoding="utf-8") as history:
-        for line in history:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    with HISTORY_LOCK:
+        with HISTORY_FILE.open(encoding="utf-8") as history:
+            for line in history:
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    return records
+
+
+def read_history() -> list[dict]:
+    records = read_history_file()
     return records[-120_960:]
+
+
+def history_timestamp(record: dict) -> datetime:
+    return datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+
+
+def add_manual_break(start_value: str, end_value: str) -> dict:
+    try:
+        start = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ManualBreakError("Choose a valid start and end time.") from error
+    if start.tzinfo is None or end.tzinfo is None:
+        raise ManualBreakError("Choose a valid start and end time.")
+
+    now = datetime.now().astimezone()
+    if start >= end:
+        raise ManualBreakError("The end time must be after the start time.")
+    if start.astimezone().date() != now.date() or end.astimezone().date() != now.date():
+        raise ManualBreakError("A missed break can only be added for today.")
+    if end > now:
+        raise ManualBreakError("The break must have ended already.")
+
+    with HISTORY_LOCK:
+        records = read_history_file()
+        records.sort(key=history_timestamp)
+
+        existing_breaks: dict[str, dict[str, datetime]] = {}
+        for record in records:
+            break_id = record.get("manual_break_id")
+            boundary = record.get("manual_break_boundary")
+            if break_id and boundary in {"start", "end"}:
+                existing_breaks.setdefault(break_id, {})[boundary] = history_timestamp(record)
+        for interval in existing_breaks.values():
+            old_start, old_end = interval.get("start"), interval.get("end")
+            if old_start and old_end and start < old_end and old_start < end:
+                raise ManualBreakError("That time overlaps a break already added today.")
+
+        for record in records:
+            timestamp = history_timestamp(record)
+            if start <= timestamp < end and record.get("paused") and not record.get("manual_break_id"):
+                raise ManualBreakError("That time overlaps a break already recorded.")
+
+        mail_open_at_start = False
+        end_source = None
+        for record in records:
+            timestamp = history_timestamp(record)
+            if timestamp < start:
+                mail_open_at_start = bool(record.get("mail_open", record.get("working", False)))
+            if timestamp <= end:
+                end_source = record
+
+        break_id = uuid4().hex
+        for record in records:
+            timestamp = history_timestamp(record)
+            if start <= timestamp < end:
+                record["working"] = False
+                record["paused"] = True
+                record["manual_break"] = True
+                record["manual_break_id"] = break_id
+
+        def boundary_record(timestamp: datetime) -> dict:
+            return next((record for record in records if history_timestamp(record) == timestamp and not record.get("manual_break_boundary")), {})
+
+        start_record = boundary_record(start)
+        if not start_record:
+            start_record = {"timestamp": start.astimezone(timezone.utc).isoformat(), "mail_open": mail_open_at_start}
+            records.append(start_record)
+        start_record.update({
+            "working": False,
+            "paused": True,
+            "manual_break": True,
+            "manual_break_id": break_id,
+            "manual_break_boundary": "start",
+        })
+
+        mail_open_at_end = bool(end_source.get("mail_open", end_source.get("working", False))) if end_source else mail_open_at_start
+        paused_at_end = bool(end_source.get("paused", False)) if end_source else False
+        end_record = boundary_record(end)
+        if not end_record:
+            end_record = {"timestamp": end.astimezone(timezone.utc).isoformat(), "mail_open": mail_open_at_end}
+            records.append(end_record)
+        end_record.update({
+            "working": mail_open_at_end and not paused_at_end,
+            "paused": paused_at_end,
+            "manual_break": False,
+            "manual_break_id": break_id,
+            "manual_break_boundary": "end",
+        })
+
+        records.sort(key=history_timestamp)
+        with HISTORY_FILE.open("w", encoding="utf-8") as history:
+            history.writelines(json.dumps(record) + "\n" for record in records)
+
+    return {"start": start.astimezone(timezone.utc).isoformat(), "end": end.astimezone(timezone.utc).isoformat()}
 
 
 def sampler_loop() -> None:
@@ -117,6 +226,18 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/manual-break":
+            body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            try:
+                request = json.loads(body or b"{}")
+                if not isinstance(request, dict):
+                    raise ManualBreakError("Choose a valid start and end time.")
+                interval = add_manual_break(request.get("start"), request.get("end"))
+            except (json.JSONDecodeError, ManualBreakError) as error:
+                self.send_json({"error": str(error) or "Choose a valid start and end time."}, status=400)
+                return
+            self.send_json({"ok": True, "break": interval})
+            return
         if path not in {"/api/pause", "/api/resume"}:
             self.send_error(404)
             return
@@ -136,9 +257,9 @@ class Handler(SimpleHTTPRequestHandler):
         PAUSE_FILE.write_text(json.dumps(pause_data), encoding="utf-8")
         self.send_json({"paused": paused, "sample": append_sample()})
 
-    def send_json(self, payload: dict) -> None:
+    def send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))

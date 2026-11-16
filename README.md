@@ -4,7 +4,9 @@ A private, lightweight macOS working-hours estimator. It samples whether your wo
 
 Use the **Pause tracking** button when you step away from work. The pause state is stored locally in `data/pause.json` and applies to future samples until resumed.
 
-The dashboard carries a working-state signal across Mac sleep for up to eight hours, so closing the lid does not erase that period. Pause tracking before stepping away ensures break time is not counted as work.
+If you forgot to pause, use **Add a missed break** at the bottom of the dashboard. Enter start and end times for today; the correction is saved in the local sample history and reflected in the daily and weekly totals.
+
+The dashboard carries each sample's working state for up to four hours. Longer gaps are unobserved and do not count as work, so a stale Mail process signal cannot count an entire day as working time. Pause tracking before stepping away to mark a break explicitly.
 
 ## Menu-bar app
 

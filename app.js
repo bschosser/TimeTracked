@@ -3,14 +3,16 @@ const formatHours = (minutes) => (minutes / 60).toFixed(1);
 const isToday = (stamp) => new Date(stamp).toDateString() === new Date().toDateString();
 const dayKey = (stamp) => new Date(stamp).toLocaleDateString("en-CA");
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
-const maxGapMinutes = 8 * 60;
+const maxCarryMinutes = 4 * 60;
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
 
 function durationMinutes(samples, index, interval) {
   const current = new Date(samples[index].timestamp).getTime();
   const next = samples[index + 1] ? new Date(samples[index + 1].timestamp).getTime() : current + interval * 1000;
-  return Math.max(0, Math.min(next - current, maxGapMinutes * 60000)) / 60000;
+  const gap = Math.max(0, next - current);
+  const creditedGap = samples[index].manual_break ? gap : Math.min(gap, maxCarryMinutes * 60000);
+  return creditedGap / 60000;
 }
 
 function renderStatus(payload) {
@@ -50,20 +52,25 @@ function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEnd
     const y = sampleWorking(samples[index]) ? 0 : 100;
     const startX = ((start - chartStart) / chartLength) * 100;
     const endX = ((end - chartStart) / chartLength) * 100;
+    const previousSample = samples[index - 1];
+    const previousStart = previousSample ? new Date(previousSample.timestamp).getTime() : start;
+    const sameManualBreak = samples[index].manual_break_id && samples[index].manual_break_id === previousSample?.manual_break_id;
+    const breakBefore = index > 0 && start - previousStart > maxCarryMinutes * 60000 && !sameManualBreak;
     const previous = segments[segments.length - 1];
-    if (previous && previous.y === y) {
+    if (previous && !breakBefore && previous.y === y) {
       previous.end = endX;
     } else {
-      segments.push({ start: startX, end: endX, y: y });
+      segments.push({ start: startX, end: endX, y: y, breakBefore });
     }
   }
   if (!segments.length) return;
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  let pathData = "M " + segments[0].start + " " + segments[0].y;
+  let pathData = "";
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index];
     const next = segments[index + 1];
-    if (!next) {
+    if (index === 0 || segment.breakBefore) pathData += " M " + segment.start + " " + segment.y;
+    if (!next || next.breakBefore) {
       pathData += " L " + segment.end + " " + segment.y;
       continue;
     }
@@ -354,6 +361,60 @@ async function resumeTracking(wasBreak) {
   } finally { buttons.forEach((button) => { button.disabled = false; }); }
 }
 
+function timeInputValue(date) {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function setDefaultManualBreakTimes() {
+  const end = new Date();
+  end.setSeconds(0, 0);
+  const start = new Date(end.getTime() - 30 * 60000);
+  if (start.toDateString() !== end.toDateString()) start.setHours(0, 0, 0, 0);
+  $("manual-break-start").value = timeInputValue(start);
+  $("manual-break-end").value = timeInputValue(end);
+}
+
+function setManualBreakFormOpen(open) {
+  const form = $("manual-break-form");
+  form.hidden = !open;
+  $("manual-break-toggle").setAttribute("aria-expanded", String(open));
+  if (open) {
+    if (!$("manual-break-start").value) setDefaultManualBreakTimes();
+    $("manual-break-start").focus();
+  }
+}
+
+async function addManualBreak(event) {
+  event.preventDefault();
+  const message = $("manual-break-message");
+  const submit = $("manual-break-form").querySelector("[type=submit]");
+  const [startHour, startMinute] = $("manual-break-start").value.split(":").map(Number);
+  const [endHour, endMinute] = $("manual-break-end").value.split(":").map(Number);
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startHour, startMinute);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endHour, endMinute);
+  if (start >= end) { message.textContent = "The end time must be after the start time."; return; }
+  if (end > now) { message.textContent = "The break must have ended already."; return; }
+
+  submit.disabled = true;
+  message.textContent = "Saving…";
+  try {
+    const response = await fetch("/api/manual-break", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Could not save the break.");
+    message.textContent = "Break added for today.";
+    $("manual-break-start").value = "";
+    $("manual-break-end").value = "";
+    await refresh();
+  } catch (error) {
+    message.textContent = error.message || "Could not save the break.";
+  } finally { submit.disabled = false; }
+}
+
 async function refresh() {
   try {
     const [statusResponse, historyResponse] = await Promise.all([fetch("/api/status"), fetch("/api/history")]);
@@ -370,5 +431,8 @@ $("overlay-work").addEventListener("click", () => resumeTracking(false));
 $("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; refresh(); });
 $("next-week").addEventListener("click", () => { selectedWeekOffset += 1; refresh(); });
 $("average-window").addEventListener("change", (event) => { averageWindowDays = Number(event.target.value); refresh(); });
+$("manual-break-toggle").addEventListener("click", () => setManualBreakFormOpen($("manual-break-form").hidden));
+$("manual-break-cancel").addEventListener("click", () => setManualBreakFormOpen(false));
+$("manual-break-form").addEventListener("submit", addManualBreak);
 refresh();
 setInterval(refresh, 30000);

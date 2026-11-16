@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Desk signal</title>
-  <link rel="stylesheet" href="styles.css?v=20261015-1">
-  <script defer src="app.js?v=20261015-1"></script>
+  <link rel="stylesheet" href="styles.css?v=20261022-1">
+  <script defer src="app.js?v=20261022-1"></script>
 </head>
 <body>
   <div id="pause-overlay" class="pause-overlay" aria-hidden="true">
@@ -56,7 +56,7 @@
       <div class="section-heading"><div><p class="eyebrow">Signal timeline</p><h2>Today at a glance</h2></div><span class="legend"><i class="working-dot"></i> working <i class="idle-dot"></i> not working</span></div>
       <div class="timeline-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="timeline" class="timeline"><div class="empty">Your first day will draw itself here.</div></div></div>
       <div class="time-axis"><span id="axis-start">--</span><span id="axis-quarter">--</span><span id="axis-mid">--</span><span id="axis-three-quarter">--</span><span id="axis-end">--</span></div>
-      <p class="chart-note">Bars show working minutes by hour. The green line tracks working or not working over the day, including sleep gaps of up to 8 hours.</p>
+      <p class="chart-note">Bars show working minutes by hour. The green line carries the latest state for up to four hours; longer gaps are unobserved and do not count as work.</p>
     </section>
 
     <section class="average-day-section">
@@ -73,6 +73,17 @@
     </section>
 
     <section class="break-section"><div><p class="eyebrow">Breathing room</p><h2>Breaks are part of the record.</h2></div><div class="break-stat"><strong id="break-count">--</strong><span>manual pauses<br>today</span></div></section>
+    <section class="manual-break-tools">
+      <button id="manual-break-toggle" class="manual-break-toggle" type="button" aria-expanded="false" aria-controls="manual-break-form">Add a missed break</button>
+      <form id="manual-break-form" class="manual-break-form" hidden>
+        <p>Record a break for today</p>
+        <label for="manual-break-start">From <input id="manual-break-start" type="time" required></label>
+        <label for="manual-break-end">To <input id="manual-break-end" type="time" required></label>
+        <button class="manual-break-submit" type="submit">Save break</button>
+        <button id="manual-break-cancel" class="manual-break-cancel" type="button">Cancel</button>
+        <span id="manual-break-message" role="status" aria-live="polite"></span>
+      </form>
+    </section>
     <footer><span>Local only · sampling every <b id="interval">60</b> sec</span><span>Working signal</span></footer>
   </main>
 </body>
