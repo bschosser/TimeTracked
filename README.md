@@ -16,8 +16,6 @@ These views show the dashboard in demo mode (generated sample data, not real wor
 
 ![Desk Signal dashboard in demo mode](examples/dashboard.png)
 
-![Desk Signal showing a previous working day in demo mode](examples/previous-working-day.png)
-
 ## Demo mode and color palettes
 
 Open http://127.0.0.1:8765/?demo to see the dashboard with generated sample data instead of your own history, for example to take screenshots. Demo mode does not change anything: pausing, breaks and app changes are disabled.
