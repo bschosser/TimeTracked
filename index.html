@@ -4,8 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Desk signal</title>
-  <link rel="stylesheet" href="styles.css?v=20261116-1">
-  <script defer src="app.js?v=20261116-1"></script>
+  <link rel="stylesheet" href="styles.css?v=2026-11-17.4">
+  <link rel="stylesheet" href="palettes.css?v=2026-11-17.4">
+  <script>
+    // Apply the chosen palette before first paint: ?palette=<name> wins, then the saved choice.
+    try {
+      const palette = new URLSearchParams(location.search).get("palette") || localStorage.getItem("palette");
+      if (palette) document.documentElement.dataset.palette = palette;
+    } catch {}
+  </script>
+  <script defer src="app.js?v=2026-11-17.4"></script>
 </head>
 <body>
   <div id="pause-overlay" class="pause-overlay" aria-hidden="true">
@@ -63,11 +71,11 @@
       <div class="section-heading"><div><p class="eyebrow">Signal timeline</p><h2 id="daily-title">Today at a glance</h2></div><div class="daily-controls"><span class="legend"><i class="working-dot"></i> working <i class="idle-dot"></i> not working</span><div class="day-controls"><button id="previous-day" type="button" aria-label="Previous working day">←</button><button id="next-day" type="button" aria-label="Next working day">→</button></div></div></div>
       <div class="timeline-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="timeline" class="timeline"><div class="empty">Your first day will draw itself here.</div></div></div>
       <div class="time-axis"><span id="axis-start">--</span><span id="axis-quarter">--</span><span id="axis-mid">--</span><span id="axis-three-quarter">--</span><span id="axis-end">--</span></div>
-      <p class="chart-note">Bars show working minutes by hour. The green line carries the latest state for up to four hours; longer gaps are unobserved and do not count as work.</p>
+      <p class="chart-note">Bars show working minutes by hour. The line carries the latest state for up to four hours; longer gaps are unobserved and do not count as work.</p>
     </section>
 
     <section class="average-day-section">
-      <div class="section-heading"><div><p class="eyebrow">Average day</p><h2>Typical working pattern</h2></div><div class="average-controls"><label for="average-window">Window</label><select id="average-window"><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="90">90 days</option></select><span class="legend"><i class="average-line-dot"></i> average <i class="average-band-dot"></i> variation</span></div></div>
+      <div class="section-heading"><div><p class="eyebrow">Average day</p><h2>Typical working pattern</h2></div><div class="average-controls"><label for="average-window">Window</label><select id="average-window"><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="90">90 days</option><option value="all">All</option></select><span class="legend"><i class="average-line-dot"></i> average <i class="average-band-dot"></i> variation</span></div></div>
       <div class="average-day-wrap"><div class="y-labels"><span>working</span><span>50%</span><span>not working</span></div><div id="average-day-chart" class="average-day-chart"><div class="empty">Not enough history yet.</div></div></div>
       <div class="time-axis average-axis"><span id="average-axis-start">--</span><span id="average-axis-quarter">--</span><span id="average-axis-mid">--</span><span id="average-axis-three-quarter">--</span><span id="average-axis-end">--</span></div>
       <p class="chart-note">Average working state over the selected completed days, excluding today and days with no recorded work. The shaded band shows one standard deviation between working days.</p>
@@ -91,7 +99,7 @@
         <span id="manual-break-message" role="status" aria-live="polite"></span>
       </form>
     </section>
-    <footer><span>Local only · sampling every <b id="interval">60</b> sec</span><span>Working signal · <span id="app-version"></span></span></footer>
+    <footer><span>Local only · sampling every <b id="interval">60</b> sec</span><span class="footer-meta"><label for="palette-picker">Palette</label><select id="palette-picker"></select><span>Working signal · <span id="app-version"></span></span></span></footer>
   </main>
 </body>
 </html>

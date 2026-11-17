@@ -1,5 +1,5 @@
 // Keep in sync with APP_VERSION in tracker.py; shown in the footer.
-const APP_VERSION = "2026-11-17.3";
+const APP_VERSION = "2026-11-17.4";
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -108,7 +108,7 @@ function renderStatus(payload) {
   if (signalAppInput && document.activeElement !== signalAppInput) signalAppInput.value = payload.mail_app;
   $("interval").textContent = payload.interval;
   $("mail-state").textContent = current.mail_open ? "Open" : "Closed";
-  $("mail-state").style.color = current.mail_open ? "#fa896f" : "#9ca9a4";
+  $("mail-state").style.color = current.mail_open ? "var(--coral)" : "var(--faint)";
   $("pause-button").textContent = payload.paused ? "Resume tracking" : "Pause tracking";
   $("pause-button").classList.toggle("paused", payload.paused);
   if (payload.paused) showPauseOverlay(); else hidePauseOverlay();
@@ -303,7 +303,8 @@ function renderAverageDay(payload) {
   const endOfCompletedDays = new Date();
   endOfCompletedDays.setHours(0, 0, 0, 0);
   const cutoff = new Date(endOfCompletedDays);
-  cutoff.setDate(cutoff.getDate() - averageWindowDays);
+  if (averageWindowDays === "all") cutoff.setTime(payload.samples[0]?.time ?? endOfCompletedDays.getTime());
+  else cutoff.setDate(cutoff.getDate() - averageWindowDays);
   const binMinutes = 10;
   const binsPerDay = (24 * 60) / binMinutes;
   const days = {};
@@ -446,6 +447,7 @@ function renderWeek(payload) {
 }
 
 async function pauseTracking() {
+  if (DEMO) return;
   const button = $("pause-button");
   button.disabled = true;
   try {
@@ -457,6 +459,7 @@ async function pauseTracking() {
 }
 
 async function resumeTracking(wasBreak) {
+  if (DEMO) return;
   const buttons = [$("overlay-break"), $("overlay-work")];
   buttons.forEach((button) => { button.disabled = true; });
   hidePauseOverlay();
@@ -509,6 +512,7 @@ async function saveSignalApp(event) {
   const button = form.querySelector("[type=submit]");
   const message = $("signal-app-message");
   const appName = $("signal-app-name").value.trim();
+  if (DEMO) { message.textContent = "Demo mode: settings are not changed."; return; }
   if (!appName) { message.textContent = "Enter the app's process name."; return; }
 
   button.disabled = true;
@@ -532,6 +536,7 @@ async function addManualBreak(event) {
   event.preventDefault();
   const message = $("manual-break-message");
   const submit = $("manual-break-form").querySelector("[type=submit]");
+  if (DEMO) { message.textContent = "Demo mode: breaks are not saved."; return; }
   const [startHour, startMinute] = $("manual-break-start").value.split(":").map(Number);
   const [endHour, endMinute] = $("manual-break-end").value.split(":").map(Number);
   const now = new Date();
@@ -559,6 +564,26 @@ async function addManualBreak(event) {
   } finally { submit.disabled = false; }
 }
 
+// Palettes are defined in palettes.css; "original" is the default from styles.css.
+const PALETTES = [
+  { id: "original", name: "Original" },
+  { id: "autumn-rose", name: "Autumn rose" },
+  { id: "maple-blush", name: "Maple & blush" },
+  { id: "plum-harvest", name: "Plum harvest" },
+];
+
+function setupPalettePicker() {
+  const picker = $("palette-picker");
+  const current = document.documentElement.dataset.palette || "original";
+  for (const palette of PALETTES) picker.add(new Option(palette.name, palette.id, false, palette.id === current));
+  picker.addEventListener("change", () => {
+    const palette = picker.value;
+    if (palette === "original") delete document.documentElement.dataset.palette;
+    else document.documentElement.dataset.palette = palette;
+    try { localStorage.setItem("palette", palette); } catch {}
+  });
+}
+
 function historyUrl() {
   const last = historyState.samples.at(-1);
   if (!last || !historyState.revision) return "/api/history";
@@ -569,7 +594,10 @@ function historyUrl() {
 // with the full history (full: true) when past records changed, e.g. after a
 // manual break, or when this is the first load.
 async function loadHistory() {
-  const payload = await readJson(await fetch(historyUrl()));
+  applyHistory(await readJson(await fetch(historyUrl())));
+}
+
+function applyHistory(payload) {
   const incoming = prepareSamples(payload.samples);
   const append = payload.full === false;
   let samples = append ? historyState.samples.concat(incoming) : incoming;
@@ -588,12 +616,55 @@ async function loadHistory() {
 
 function render() {
   if (statusState) renderStatus(statusState);
+  if (DEMO) $("last-updated").textContent = "Demo data";
   renderHistory(historyState);
   const serverVersion = statusState?.version || "outdated";
   $("app-version").textContent = serverVersion === APP_VERSION ? `v${APP_VERSION}` : `page v${APP_VERSION} · server ${serverVersion} — restart tracker`;
 }
 
+// Demo mode (?demo in the URL): show generated sample data instead of your own history,
+// e.g. for README screenshots or for trying palettes. Nothing is sent to the tracker.
+const DEMO = new URLSearchParams(location.search).has("demo");
+
+function demoHistory(now = Date.now()) {
+  let seed = 20261117;
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const minutes = (value) => value * 60000;
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const samples = [];
+  for (let offset = 41; offset >= 0; offset -= 1) {
+    const day = new Date(today);
+    day.setDate(day.getDate() - offset);
+    if (day.getDay() === 0 || day.getDay() === 6) continue;
+    const at = (hour, minute) => new Date(day.getFullYear(), day.getMonth(), day.getDate(), hour, minute).getTime();
+    const start = at(8, 25 + Math.floor(random() * 50));
+    const end = at(16, 45 + Math.floor(random() * 100));
+    const lunchStart = at(12, 5 + Math.floor(random() * 45));
+    const lunchEnd = lunchStart + minutes(30 + Math.floor(random() * 30));
+    const gaps = Array.from({ length: 2 + Math.floor(random() * 3) }, () => {
+      const gapStart = start + random() * (end - start);
+      return [gapStart, gapStart + minutes(8 + random() * 30)];
+    });
+    for (let time = start - minutes(15); time < Math.min(end + minutes(25), now); time += minutes(1)) {
+      const paused = time >= lunchStart && time < lunchEnd;
+      const mailOpen = time >= start && time < end && !gaps.some(([from, to]) => time >= from && time < to);
+      samples.push({ timestamp: new Date(time).toISOString(), mail_open: mailOpen, working: mailOpen && !paused, paused });
+    }
+  }
+  return samples;
+}
+
+function loadDemo() {
+  const samples = demoHistory();
+  applyHistory({ samples, interval: 60, full: true });
+  const current = samples.at(-1) || { timestamp: new Date().toISOString(), mail_open: false, working: false, paused: false };
+  statusState = { current, interval: 60, mail_app: "Mail", paused: false, version: APP_VERSION };
+  render();
+}
+
 async function fetchAndRender() {
+  if (DEMO) { loadDemo(); return; }
   try {
     const [status] = await Promise.all([fetch("/api/status").then(readJson), loadHistory()]);
     statusState = status;
@@ -616,7 +687,11 @@ $("previous-day").addEventListener("click", () => moveSelectedDay(-1));
 $("next-day").addEventListener("click", () => moveSelectedDay(1));
 $("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; render(); });
 $("next-week").addEventListener("click", () => { selectedWeekOffset += 1; render(); });
-$("average-window").addEventListener("change", (event) => { averageWindowDays = Number(event.target.value); render(); });
+$("average-window").addEventListener("change", (event) => {
+  averageWindowDays = event.target.value === "all" ? "all" : Number(event.target.value);
+  render();
+});
+setupPalettePicker();
 $("signal-app-toggle").addEventListener("click", () => setSignalAppFormOpen($("signal-app-form").hidden));
 $("signal-app-form").addEventListener("submit", saveSignalApp);
 $("manual-break-toggle").addEventListener("click", () => setManualBreakFormOpen($("manual-break-form").hidden));

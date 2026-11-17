@@ -8,15 +8,23 @@ If you forgot to pause, use **Add a missed break** at the bottom of the dashboar
 
 The dashboard carries each sample's working state for up to four hours. Longer gaps are unobserved and do not count as work, so a stale app process cannot count an entire day as working time. Pause tracking before stepping away to mark a break explicitly.
 
-Use the arrows beside **Signal timeline** to browse days with recorded work. Open **Change app** in the **Right now** panel to choose a different app process as the work signal. The tracker checks whether that process is running; it does not detect whether the app is in the foreground.
+Use the arrows beside **Signal timeline** to browse days with recorded work. The **Average day** chart can cover the last 7, 14, 30 or 90 completed days, or **All** recorded history. Open **Change app** in the **Right now** panel to choose a different app process as the work signal. The tracker checks whether that process is running; it does not detect whether the app is in the foreground.
 
 ## Example views
 
-These example dashboard views are illustrations with sample values.
+These views show the dashboard in demo mode (generated sample data, not real working hours).
 
 ![Illustrative Desk Signal daily dashboard](examples/dashboard.svg)
 
 ![Illustrative Desk Signal showing a previous working day](examples/previous-working-day.svg)
+
+## Demo mode and color palettes
+
+Open http://127.0.0.1:8765/?demo to see the dashboard with generated sample data instead of your own history, for example to take screenshots. Demo mode does not change anything: pausing, breaks and app changes are disabled.
+
+Pick a color palette with the **Palette** selector in the footer; the choice is remembered in this browser. You can also link to one directly, e.g. http://127.0.0.1:8765/?demo&palette=autumn-rose. Palettes are defined in `palettes.css`: copy a block, rename it, add the name to `PALETTES` in `app.js`, and reload the page. CSS and JavaScript changes only need a page reload, not a tracker restart.
+
+The footer also shows the dashboard version. If it says `restart tracker`, the running tracker is older than the page: stop it with `pkill -f '[p]ython3 tracker.py'` and start it again.
 
 ## Menu-bar app
 
@@ -53,4 +61,4 @@ The default sample interval is 60 seconds. Override it for a quick test:
 TRACK_INTERVAL=10 python3 tracker.py
 ```
 
-The app stores samples and the selected process name under the ignored `data/` directory. To use an app other than Mail, click **Change app** in the dashboard and enter its exact process name (for example, `Code` or `Xcode`). For a standalone tracker, run `MAIL_APP=Code python3 tracker.py`; a saved dashboard choice takes precedence over that default.
+The app stores samples and the selected process name under the ignored `data/` directory (override with `TRACKER_DATA_DIR=/some/folder`). To use an app other than Mail, click **Change app** in the dashboard and enter its exact process name (for example, `Code` or `Xcode`). For a standalone tracker, run `MAIL_APP=Code python3 tracker.py`; a saved dashboard choice takes precedence over that default.

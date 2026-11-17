@@ -14,7 +14,7 @@ from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 ROOT = Path(__file__).parent
-DATA_DIR = ROOT / "data"
+DATA_DIR = Path(os.getenv("TRACKER_DATA_DIR", str(ROOT / "data")))
 HISTORY_FILE = DATA_DIR / "samples.jsonl"
 PAUSE_FILE = DATA_DIR / "pause.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
@@ -22,7 +22,7 @@ INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 HISTORY_LOCK = threading.RLock()
 # Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
-APP_VERSION = "2026-11-17.3"
+APP_VERSION = "2026-11-17.4"
 HISTORY_LIMIT = 120_960
 
 # In-memory copy of samples.jsonl so requests don't re-read the whole file.

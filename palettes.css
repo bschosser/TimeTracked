@@ -1,0 +1,39 @@
+/*
+  Color palettes for the dashboard. The default ("original") palette is defined in styles.css.
+  Each palette below overrides the same variables; pick one with the selector in the footer
+  or with ?palette=<name> in the URL. To try a new palette, copy a block, give it a new name,
+  add that name to PALETTES in app.js, then just reload the page (no tracker restart needed).
+
+  Roles:
+    --paper        page background            --ink          text, dark panels, top stripe
+    --mint         working-estimate panel     --green        lines, eyebrows, meter fill
+    --coral        working bars, accents      --sun          hover / highlight
+    --card         white cards and forms      --grid         chart grid lines
+    --idle         "not working" bars         --break        break bars
+    --faint        axis labels                --disabled     disabled buttons
+    --hover        light button hover         --pulse-ring   ring around the live dot
+    --body-muted   intro text                 --meter-track  meter background
+    --score-foot   text under the meter       --muted / --line   secondary text / borders
+    --on-dark, --on-dark-muted, --dark-*      text, borders and inputs on dark panels
+*/
+
+/* Autumn rose: warm cream, aubergine ink, blush panel, cranberry lines, terracotta bars. */
+:root[data-palette="autumn-rose"] {
+  --ink:#2e1f27; --muted:#8a7479; --line:#ead9cf; --paper:#f8f1ea; --mint:#f3c9c8; --green:#8c2f39; --coral:#e07a5f; --sun:#f2b544;
+  --card:#fffaf5; --grid:#efe3da; --idle:#efe2da; --break:#e3cfc6; --faint:#a8928f; --disabled:#cbb7b2; --hover:#f7e4e1; --pulse-ring:#f3d3d0; --body-muted:#6f5a5f; --meter-track:#e6a9a9; --score-foot:#7d4b52;
+  --on-dark:#f8ece6; --on-dark-muted:#cdb8b8; --dark-panel:#3a2831; --dark-line:#4a3640; --dark-border:#5a4450; --dark-input-border:#6a5260;
+}
+
+/* Maple & blush: espresso ink, peach panel, maple-red lines, dusty-pink bars, amber highlights. */
+:root[data-palette="maple-blush"] {
+  --ink:#3b2a20; --muted:#8c7a6e; --line:#eddcd0; --paper:#faf4ee; --mint:#f6d1c1; --green:#b5523b; --coral:#d98a9c; --sun:#e9a03b;
+  --card:#fffbf7; --grid:#f1e4da; --idle:#f0e3da; --break:#e6d3c8; --faint:#ab978b; --disabled:#cdbcb1; --hover:#f8e6dc; --pulse-ring:#f5d9cc; --body-muted:#6e5b4f; --meter-track:#eba98f; --score-foot:#8a4a37;
+  --on-dark:#faefe7; --on-dark-muted:#d2bfb2; --dark-panel:#4a362a; --dark-line:#574235; --dark-border:#65503f; --dark-input-border:#76604e;
+}
+
+/* Plum harvest: plum ink, mauve panel, olive lines, pumpkin bars, golden highlights. */
+:root[data-palette="plum-harvest"] {
+  --ink:#3a2338; --muted:#8a7688; --line:#e8dad9; --paper:#f6efe9; --mint:#e8c6d6; --green:#5f6b3a; --coral:#d1603d; --sun:#e7b04f;
+  --card:#fffaf6; --grid:#ede2dd; --idle:#eee2dc; --break:#e0d0cc; --faint:#a3929f; --disabled:#c9b9c3; --hover:#f3e5ec; --pulse-ring:#ead3df; --body-muted:#6c5869; --meter-track:#cfa3b8; --score-foot:#6b4a63;
+  --on-dark:#f7ecf2; --on-dark-muted:#cdb9c8; --dark-panel:#4a2f47; --dark-line:#573a54; --dark-border:#664762; --dark-input-border:#765673;
+}
