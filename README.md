@@ -14,9 +14,9 @@ Use the arrows beside **Signal timeline** to browse days with recorded work. The
 
 These views show the dashboard in demo mode (generated sample data, not real working hours).
 
-![Illustrative Desk Signal daily dashboard](examples/dashboard.svg)
+![Desk Signal dashboard in demo mode](examples/dashboard.png)
 
-![Illustrative Desk Signal showing a previous working day](examples/previous-working-day.svg)
+![Desk Signal showing a previous working day in demo mode](examples/previous-working-day.png)
 
 ## Demo mode and color palettes
 
