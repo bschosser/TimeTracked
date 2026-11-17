@@ -4,16 +4,24 @@ A private, lightweight working-hours tracker for macOS. Once a minute it checks 
 
 ![Desk Signal dashboard](examples/dashboard.png)
 
+## Requirements
+
+- macOS 13 (Ventura) or newer, Apple Silicon or Intel.
+- `python3` 3.9 or newer: from Homebrew, or the one in Apple's Command Line Tools (`xcode-select --install`).
+
 ## Getting started
 
-Build and start the menu-bar app:
+The repository includes a ready-built menu-bar app. Clone the project and start it:
 
 ```sh
-./build_menubar_app.sh
+git clone https://github.com/bschosser/TimeTracked.git
+cd TimeTracked
 nohup build/DeskSignal.app/Contents/MacOS/DeskSignal > /tmp/DeskSignal.log 2>&1 </dev/null &
 ```
 
-A **TT** icon appears in the menu bar and starts the tracker. Choose **Open dashboard** there, or go to http://127.0.0.1:8765. The app is unsigned, so macOS may ask you to confirm the first launch.
+A **TT** icon appears in the menu bar and starts the tracker. Choose **Open dashboard** there, or go to http://127.0.0.1:8765. Leave the app in `build/` inside the project folder: it starts `tracker.py` from there.
+
+Only if you change `DeskSignal.swift` or the included app does not open, rebuild it with `./build_menubar_app.sh` (needs the Command Line Tools).
 
 Without the menu-bar app, run the tracker on its own:
 
@@ -32,7 +40,7 @@ Stop it with `pkill -f '[p]ython3 tracker.py'`. Run only one of the two; both us
 
 ## Good to know
 
-- Runs on macOS 13 or newer, on Apple Silicon and Intel. The menu-bar app uses Homebrew's `python3` if installed, otherwise the system one; set `DESK_SIGNAL_PYTHON=/path/to/python3` to choose another.
+- The menu-bar app uses Homebrew's `python3` if installed, otherwise the system one; set `DESK_SIGNAL_PYTHON=/path/to/python3` to choose another.
 - Data is stored in the `data/` folder of the project (ignored by git).
 - Gaps of more than four hours without samples (e.g. the Mac was asleep) never count as work.
 - If the footer says `restart tracker` after an update, stop the tracker and start it again.
