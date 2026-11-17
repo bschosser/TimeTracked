@@ -8,6 +8,16 @@ let availableDayKeys = [];
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
 
+async function readJson(response) {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (response.status === 404) throw new Error("The running tracker is outdated. Quit and restart it (pkill -f '[p]ython3 tracker.py'), then reopen the dashboard.");
+    throw new Error(`The tracker returned an unexpected response (HTTP ${response.status}).`);
+  }
+}
+
 function durationMinutes(samples, index, interval) {
   const current = new Date(samples[index].timestamp).getTime();
   const next = samples[index + 1] ? new Date(samples[index + 1].timestamp).getTime() : current + interval * 1000;
@@ -369,7 +379,7 @@ async function pauseTracking() {
   button.disabled = true;
   try {
     const response = await fetch("/api/pause", { method: "POST" });
-    const result = await response.json();
+    const result = await readJson(response);
     if (result.paused) showPauseOverlay();
     await refresh();
   } finally { button.disabled = false; }
@@ -438,7 +448,7 @@ async function saveSignalApp(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mail_app: appName }),
     });
-    const result = await response.json();
+    const result = await readJson(response);
     if (!response.ok) throw new Error(result.error || "Could not change the work signal.");
     message.textContent = `Now watching ${result.mail_app}.`;
     await refresh();
@@ -467,7 +477,7 @@ async function addManualBreak(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
     });
-    const result = await response.json();
+    const result = await readJson(response);
     if (!response.ok) throw new Error(result.error || "Could not save the break.");
     message.textContent = "Break added for today.";
     $("manual-break-start").value = "";
@@ -481,8 +491,8 @@ async function addManualBreak(event) {
 async function refresh() {
   try {
     const [statusResponse, historyResponse] = await Promise.all([fetch("/api/status"), fetch("/api/history")]);
-    const status = await statusResponse.json();
-    const history = await historyResponse.json();
+    const status = await readJson(statusResponse);
+    const history = await readJson(historyResponse);
     renderStatus(status); renderHistory(history);
   } catch { $("last-updated").textContent = "Tracker offline"; }
 }

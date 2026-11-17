@@ -62,7 +62,10 @@ def set_signal_app(value: object) -> str:
 
 
 def is_app_open(app_name: str) -> bool:
-    result = subprocess.run(["pgrep", "-x", app_name], capture_output=True, timeout=3)
+    try:
+        result = subprocess.run(["pgrep", "-x", app_name], capture_output=True, timeout=3)
+    except (OSError, subprocess.SubprocessError):
+        return False
     return result.returncode == 0
 
 
@@ -254,9 +257,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/history":
             self.send_json({"samples": read_history(), "interval": INTERVAL_SECONDS})
             return
+        if path.startswith("/api/"):
+            self.send_json({"error": f"Unknown endpoint {path}."}, status=404)
+            return
         super().do_GET()
 
     def do_POST(self):  # noqa: N802
+        try:
+            self.handle_post()
+        except Exception as error:  # noqa: BLE001 - always answer API calls with JSON
+            self.send_json({"error": f"Tracker error: {error}"}, status=500)
+
+    def handle_post(self) -> None:
         path = urlparse(self.path).path
         if path == "/api/settings":
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -283,7 +295,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_json({"ok": True, "break": interval})
             return
         if path not in {"/api/pause", "/api/resume"}:
-            self.send_error(404)
+            self.send_json({"error": f"Unknown endpoint {path}."}, status=404)
             return
         if path == "/api/resume":
             body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
