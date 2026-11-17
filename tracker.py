@@ -21,6 +21,8 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 HISTORY_LOCK = threading.RLock()
+# Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
+APP_VERSION = "2026-11-17.3"
 HISTORY_LIMIT = 120_960
 
 # In-memory copy of samples.jsonl so requests don't re-read the whole file.
@@ -310,7 +312,7 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/status":
             current = latest_sample()
-            self.send_json({"current": current if current else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": signal_app(), "paused": is_paused()})
+            self.send_json({"current": current if current else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": signal_app(), "paused": is_paused(), "version": APP_VERSION})
             return
         if path == "/api/settings":
             self.send_json({"mail_app": signal_app()})
@@ -375,6 +377,13 @@ class Handler(SimpleHTTPRequestHandler):
             pause_data["started_at"] = datetime.now(timezone.utc).isoformat()
         PAUSE_FILE.write_text(json.dumps(pause_data), encoding="utf-8")
         self.send_json({"paused": paused, "sample": append_sample()})
+
+    def end_headers(self) -> None:
+        # Make the browser revalidate app.js/index.html/styles.css on every load
+        # (cheap 304 when unchanged) so an updated checkout is picked up at once.
+        if not urlparse(self.path).path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
 
     def send_json(self, payload: dict, status: int = 200) -> None:
         body = json.dumps(payload).encode()

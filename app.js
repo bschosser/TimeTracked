@@ -1,3 +1,5 @@
+// Keep in sync with APP_VERSION in tracker.py; shown in the footer.
+const APP_VERSION = "2026-11-17.3";
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -6,6 +8,13 @@ const dayKey = (stamp) => {
   const date = stamp instanceof Date ? stamp : new Date(stamp);
   return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
 };
+// Reused formatters: toLocaleDateString(…, options) builds a new formatter on every call, which is slow.
+const formatters = {
+  longDay: new Intl.DateTimeFormat([], { weekday: "long", month: "short", day: "numeric" }),
+  shortDate: new Intl.DateTimeFormat([], { month: "short", day: "numeric" }),
+  weekday: new Intl.DateTimeFormat([], { weekday: "short" }),
+  clock: new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }),
+};
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
 const maxCarryMinutes = 4 * 60;
 let selectedDayKey = dayKey(new Date());
@@ -13,13 +22,65 @@ let availableDayKeys = [];
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
 const historyLimit = 120960;
-let historyState = { samples: [], interval: 60, revision: null };
+let historyState = { samples: [], interval: 60, revision: null, days: new Map(), workingDays: new Set() };
 let statusState = null;
 
 // Parse each timestamp once; every chart reuses `time` (ms) and `day` (local YYYY-MM-DD).
-function prepareSample(sample) {
-  const time = Date.parse(sample.timestamp);
-  return Object.assign(sample, { time, day: dayKey(new Date(time)) });
+// Samples arrive in time order, so the day only has to be recomputed when one crosses midnight.
+function prepareSamples(samples) {
+  let dayStart = Infinity;
+  let dayEnd = -Infinity;
+  let key = "";
+  for (const sample of samples) {
+    const time = Date.parse(sample.timestamp);
+    if (!(time >= dayStart && time < dayEnd)) {
+      const date = new Date(time);
+      key = dayKey(date);
+      date.setHours(0, 0, 0, 0);
+      dayStart = date.getTime();
+      date.setDate(date.getDate() + 1);
+      dayEnd = date.getTime();
+    }
+    sample.time = time;
+    sample.day = key;
+    sample.minute = -1;
+  }
+  return samples;
+}
+
+// Local minute of the day (0–1439), computed on first use and cached on the sample.
+function localMinute(sample) {
+  if (sample.minute < 0) {
+    const date = new Date(sample.time);
+    sample.minute = date.getHours() * 60 + date.getMinutes();
+  }
+  return sample.minute;
+}
+
+// Group samples by day so day/week views only touch the days they show.
+function addToDayIndex(days, workingDays, samples) {
+  for (const sample of samples) {
+    let list = days.get(sample.day);
+    if (!list) days.set(sample.day, (list = []));
+    list.push(sample);
+    if (sampleWorking(sample)) workingDays.add(sample.day);
+  }
+}
+
+// Samples with startTime <= time < endTime, in time order, read from the day index.
+function samplesBetween(startTime, endTime) {
+  const last = historyState.samples.at(-1);
+  if (!last) return [];
+  const loopEnd = Math.min(endTime, last.time + 1);
+  const result = [];
+  const cursor = new Date(startTime);
+  cursor.setHours(0, 0, 0, 0);
+  for (; cursor.getTime() < loopEnd; cursor.setDate(cursor.getDate() + 1)) {
+    const day = historyState.days.get(dayKey(cursor));
+    if (!day) continue;
+    for (const sample of day) if (sample.time >= startTime && sample.time < endTime) result.push(sample);
+  }
+  return result;
 }
 
 async function readJson(response) {
@@ -52,7 +113,7 @@ function renderStatus(payload) {
   $("pause-button").classList.toggle("paused", payload.paused);
   if (payload.paused) showPauseOverlay(); else hidePauseOverlay();
   $("state-note").textContent = payload.paused ? "Manual pause is active" : current.working ? `Counting time while ${payload.mail_app} is open` : `${payload.mail_app} is not open`;
-  $("last-updated").textContent = `Updated ${new Date(current.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  $("last-updated").textContent = `Updated ${formatters.clock.format(new Date(current.timestamp))}`;
 }
 
 function showPauseOverlay() {
@@ -130,10 +191,9 @@ function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEnd
 }
 
 function renderHistory(payload) {
-  const allSamples = payload.samples;
   const todayKey = dayKey(new Date());
-  const dayKeys = new Set([todayKey]);
-  for (const sample of allSamples) if (sampleWorking(sample)) dayKeys.add(sample.day);
+  const dayKeys = new Set(payload.workingDays);
+  dayKeys.add(todayKey);
   availableDayKeys = Array.from(dayKeys).filter((key) => key <= todayKey).sort();
   if (!availableDayKeys.includes(selectedDayKey)) {
     selectedDayKey = availableDayKeys.filter((key) => key < selectedDayKey).at(-1) || todayKey;
@@ -143,19 +203,19 @@ function renderHistory(payload) {
   $("next-day").disabled = dayIndex < 0 || dayIndex >= availableDayKeys.length - 1;
   const isSelectedToday = selectedDayKey === todayKey;
   const selectedDate = new Date(`${selectedDayKey}T12:00:00`);
-  const selectedLabel = isSelectedToday ? "Today" : selectedDate.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  const selectedLabel = isSelectedToday ? "Today" : formatters.longDay.format(selectedDate);
   $("daily-title").textContent = isSelectedToday ? "Today at a glance" : `${selectedLabel} at a glance`;
   $("daily-estimate-label").textContent = `Working estimate · ${selectedLabel}`;
-  $("today-label").textContent = selectedDate.toLocaleDateString([], { month: "short", day: "numeric" });
+  $("today-label").textContent = formatters.shortDate.format(selectedDate);
   $("daily-hours-label").textContent = selectedLabel;
   $("manual-break-tools").hidden = !isSelectedToday;
 
-  const samples = allSamples.filter((sample) => sample.day === selectedDayKey);
+  const samples = payload.days.get(selectedDayKey) || [];
   const minutes = samples.reduce((total, sample, index) => total + (sampleWorking(sample) ? durationMinutes(samples, index, payload.interval) : 0), 0);
   const observedMinutes = samples.reduce((total, sample, index) => total + durationMinutes(samples, index, payload.interval), 0);
   const percent = observedMinutes ? Math.round((minutes / observedMinutes) * 100) : 0;
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recent = allSamples.filter((sample) => sample.time >= sevenDaysAgo);
+  const recent = samplesBetween(sevenDaysAgo, Infinity);
   const dayTotals = {};
   const breakTotals = {};
   recent.forEach((sample, index) => {
@@ -249,11 +309,10 @@ function renderAverageDay(payload) {
   const days = {};
   const cutoffTime = cutoff.getTime();
   const endTime = endOfCompletedDays.getTime();
-  payload.samples.filter((sample) => sample.time >= cutoffTime && sample.time < endTime).forEach((sample) => {
-    const date = new Date(sample.time);
+  samplesBetween(cutoffTime, endTime).forEach((sample) => {
     const key = sample.day;
     if (!days[key]) days[key] = Array(binsPerDay).fill(null);
-    const bin = Math.floor((date.getHours() * 60 + date.getMinutes()) / binMinutes);
+    const bin = Math.floor(localMinute(sample) / binMinutes);
     days[key][bin] = sampleWorking(sample) ? 1 : 0;
   });
   const dayValues = Object.values(days)
@@ -345,7 +404,7 @@ function renderWeek(payload) {
   const weekStartTime = weekStart.getTime();
   const weekEndTime = weekEnd.getTime();
   const daysByKey = new Map(days.map((day) => [day.key, day]));
-  const weekSamples = payload.samples.filter((sample) => sample.time >= weekStartTime && sample.time < weekEndTime);
+  const weekSamples = samplesBetween(weekStartTime, weekEndTime);
   weekSamples.forEach((sample, index) => {
     const minutes = durationMinutes(weekSamples, index, payload.interval);
     const day = daysByKey.get(sample.day);
@@ -359,7 +418,7 @@ function renderWeek(payload) {
   const scaleMinutes = Math.max(60, Math.ceil(Math.max(...days.map((day) => Math.max(day.minutes, day.breakMinutes)), 0) / 60) * 60);
   $("week-y-max").textContent = `${formatHours(scaleMinutes)}h`;
   $("week-y-mid").textContent = `${formatHours(scaleMinutes / 2)}h`;
-  $("week-title").textContent = `${weekStart.toLocaleDateString([], { month: "short", day: "numeric" })} – ${new Date(weekEnd - 1).toLocaleDateString([], { month: "short", day: "numeric" })}`;
+  $("week-title").textContent = `${formatters.shortDate.format(weekStart)} – ${formatters.shortDate.format(new Date(weekEnd - 1))}`;
   $("week-average").textContent = workingDays.length ? formatHours(average) : "--";
   $("week-total").textContent = `${formatHours(workingDays.reduce((sum, day) => sum + day.minutes, 0))} total hours`;
   $("next-week").disabled = selectedWeekOffset >= 0;
@@ -373,13 +432,13 @@ function renderWeek(payload) {
     const workBar = document.createElement("span");
     workBar.className = `day-bar${day.minutes ? " working" : ""}`;
     workBar.style.height = `${Math.min(day.minutes / scaleMinutes * 100, 100)}%`;
-    workBar.title = `${day.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} · ${formatHours(day.minutes)} working hours`;
+    workBar.title = `${formatters.longDay.format(day.date)} · ${formatHours(day.minutes)} working hours`;
     const breakBar = document.createElement("span");
     breakBar.className = `day-bar${day.breakMinutes ? " break" : ""}`;
     breakBar.style.height = `${Math.min(day.breakMinutes / scaleMinutes * 100, 100)}%`;
-    breakBar.title = `${day.date.toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" })} · ${formatHours(day.breakMinutes)} break hours`;
+    breakBar.title = `${formatters.longDay.format(day.date)} · ${formatHours(day.breakMinutes)} break hours`;
     const label = document.createElement("small");
-    label.textContent = day.date.toLocaleDateString([], { weekday: "short" });
+    label.textContent = formatters.weekday.format(day.date);
     bars.append(workBar, breakBar);
     column.append(bars, label);
     chart.appendChild(column);
@@ -511,18 +570,27 @@ function historyUrl() {
 // manual break, or when this is the first load.
 async function loadHistory() {
   const payload = await readJson(await fetch(historyUrl()));
-  const incoming = payload.samples.map(prepareSample);
-  const samples = payload.full === false ? historyState.samples.concat(incoming) : incoming;
-  historyState = {
-    samples: samples.length > historyLimit ? samples.slice(-historyLimit) : samples,
-    interval: payload.interval,
-    revision: payload.revision ?? null,
-  };
+  const incoming = prepareSamples(payload.samples);
+  const append = payload.full === false;
+  let samples = append ? historyState.samples.concat(incoming) : incoming;
+  const trimmed = samples.length > historyLimit;
+  if (trimmed) samples = samples.slice(-historyLimit);
+  let { days, workingDays } = historyState;
+  if (append && !trimmed) {
+    addToDayIndex(days, workingDays, incoming);
+  } else {
+    days = new Map();
+    workingDays = new Set();
+    addToDayIndex(days, workingDays, samples);
+  }
+  historyState = { samples, interval: payload.interval, revision: payload.revision ?? null, days, workingDays };
 }
 
 function render() {
   if (statusState) renderStatus(statusState);
   renderHistory(historyState);
+  const serverVersion = statusState?.version || "outdated";
+  $("app-version").textContent = serverVersion === APP_VERSION ? `v${APP_VERSION}` : `page v${APP_VERSION} · server ${serverVersion} — restart tracker`;
 }
 
 async function fetchAndRender() {
@@ -543,7 +611,7 @@ function refresh() {
 $("pause-button").addEventListener("click", pauseTracking);
 $("overlay-break").addEventListener("click", () => resumeTracking(true));
 $("overlay-work").addEventListener("click", () => resumeTracking(false));
-$("today-label").textContent = new Date().toLocaleDateString([], { month: "short", day: "numeric" });
+$("today-label").textContent = formatters.shortDate.format(new Date());
 $("previous-day").addEventListener("click", () => moveSelectedDay(-1));
 $("next-day").addEventListener("click", () => moveSelectedDay(1));
 $("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; render(); });
