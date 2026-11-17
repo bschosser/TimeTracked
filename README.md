@@ -1,62 +1,37 @@
 # Desk Signal
 
-A private, lightweight macOS working-hours estimator. It samples whether your working signal is active, then reports daily totals and a seven-day average.
+A private, lightweight working-hours tracker for macOS. Once a minute it checks whether your work app (Mail by default) is running and turns that into daily, weekly and average working hours. Everything stays on your Mac.
 
-Use the **Pause tracking** button when you step away from work. The pause state is stored locally in `data/pause.json` and applies to future samples until resumed.
+![Desk Signal dashboard](examples/dashboard.png)
 
-If you forgot to pause, use **Add a missed break** at the bottom of the dashboard. Enter start and end times for today; the correction is saved in the local sample history and reflected in the daily and weekly totals.
+## Getting started
 
-The dashboard carries each sample's working state for up to four hours. Longer gaps are unobserved and do not count as work, so a stale app process cannot count an entire day as working time. Pause tracking before stepping away to mark a break explicitly.
-
-Use the arrows beside **Signal timeline** to browse days with recorded work. The **Average day** chart can cover the last 7, 14, 30 or 90 completed days, or **All** recorded history. Open **Change app** in the **Right now** panel to choose a different app process as the work signal. The tracker checks whether that process is running; it does not detect whether the app is in the foreground.
-
-## Example views
-
-These views show the dashboard in demo mode (generated sample data, not real working hours).
-
-![Desk Signal dashboard in demo mode](examples/dashboard.png)
-
-## Demo mode and color palettes
-
-Open http://127.0.0.1:8765/?demo to see the dashboard with generated sample data instead of your own history, for example to take screenshots. Demo mode does not change anything: pausing, breaks and app changes are disabled.
-
-Pick a color palette with the **Palette** selector in the footer; the choice is remembered in this browser. You can also link to one directly, e.g. http://127.0.0.1:8765/?demo&palette=moss-rust. Palettes are defined in `palettes.css`: copy a block, rename it, add the name to `PALETTES` in `app.js`, and reload the page. CSS and JavaScript changes only need a page reload, not a tracker restart.
-
-The footer also shows the dashboard version. If it says `restart tracker`, the running tracker is older than the page: stop it with `pkill -f '[p]ython3 tracker.py'` and start it again.
-
-## Menu-bar app
-
-Build the local macOS controller:
+Build and start the menu-bar app:
 
 ```sh
 ./build_menubar_app.sh
 nohup build/DeskSignal.app/Contents/MacOS/DeskSignal > /tmp/DeskSignal.log 2>&1 </dev/null &
 ```
 
-Use the detached command above rather than running the executable in the foreground: the menu-bar app will keep running after the Terminal window closes. It starts the local tracker automatically and reuses an existing tracker if one is already listening on port 8765. On Intel Macs, the app uses `/usr/local/bin/python3`; on Apple Silicon, it uses `/opt/homebrew/bin/python3`.
+A **TT** icon appears in the menu bar and starts the tracker. Choose **Open dashboard** there, or go to http://127.0.0.1:8765. The app is unsigned, so macOS may ask you to confirm the first launch.
 
-Check that the tracker is still running:
-
-```sh
-curl http://127.0.0.1:8765/api/status
-```
-
-The `TT` icon in the menu bar provides **Start tracking**, **Stop tracking**, **Pause tracking**, **Resume tracking**, and **Open dashboard**. Choose the signal app from the dashboard. The app is local and unsigned; macOS may ask you to confirm the first launch. No Apple Developer subscription is needed for personal use on this Mac.
-
-## Run tracker only
+Without the menu-bar app, run the tracker on its own:
 
 ```sh
 nohup python3 tracker.py > /tmp/DeskSignal-tracker.log 2>&1 </dev/null &
 ```
 
-Open http://127.0.0.1:8765. A foreground tracker stops with `Ctrl-C`; stop the detached tracker with `pkill -f '[p]ython3 tracker.py'`.
+Stop it with `pkill -f '[p]ython3 tracker.py'`. Run only one of the two; both use port 8765.
 
-Do not start `tracker.py` separately if the menu-bar app is already running; both processes use port 8765.
+## Using it
 
-The default sample interval is 60 seconds. Override it for a quick test:
+- **Choose the work app:** click **Change app** in the dashboard and enter the app's process name (e.g. `Mail`, `Zulip`, `Code`). Time counts while that app is running, whether or not it is in the foreground.
+- **Pause:** use **Pause tracking** in the **TT** menu or the button on the dashboard. When you resume, you choose whether the pause was a break or should count as work.
+- **Add a missed break:** forgot to pause? Use **Add a missed break** at the bottom of the dashboard to enter a start and end time for today.
+- **Browse:** the arrows step through past days and weeks; the **Average day** chart covers 7, 14, 30 or 90 days, or all history. The footer has a **Palette** selector for the color scheme.
 
-```sh
-TRACK_INTERVAL=10 python3 tracker.py
-```
+## Good to know
 
-The app stores samples and the selected process name under the ignored `data/` directory (override with `TRACKER_DATA_DIR=/some/folder`). To use an app other than Mail, click **Change app** in the dashboard and enter its exact process name (for example, `Code` or `Xcode`). For a standalone tracker, run `MAIL_APP=Code python3 tracker.py`; a saved dashboard choice takes precedence over that default.
+- Data is stored in the `data/` folder of the project (ignored by git).
+- Gaps of more than four hours without samples (e.g. the Mac was asleep) never count as work.
+- If the footer says `restart tracker` after an update, stop the tracker and start it again.
