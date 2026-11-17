@@ -57,11 +57,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var trackerExternallyRunning = false
     private var statusTimer: Timer?
     private var pauseWindow: NSWindow?
-    #if arch(x86_64)
-    private let pythonPath = "/usr/local/bin/python3"
-    #else
-    private let pythonPath = "/opt/homebrew/bin/python3"
-    #endif
+    // Chosen at run time, so one universal build works on Apple Silicon and Intel Macs.
+    // DESK_SIGNAL_PYTHON overrides the search; otherwise Homebrew (Apple Silicon, then Intel)
+    // is preferred over the system python3 that comes with the Command Line Tools.
+    private lazy var pythonPath: String = {
+        if let custom = ProcessInfo.processInfo.environment["DESK_SIGNAL_PYTHON"], !custom.isEmpty {
+            return custom
+        }
+        let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/python3"
+    }()
     private let port = "8765"
 
     private var projectRoot: URL {

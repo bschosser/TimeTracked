@@ -32,6 +32,7 @@ Stop it with `pkill -f '[p]ython3 tracker.py'`. Run only one of the two; both us
 
 ## Good to know
 
+- Runs on macOS 13 or newer, on Apple Silicon and Intel. The menu-bar app uses Homebrew's `python3` if installed, otherwise the system one; set `DESK_SIGNAL_PYTHON=/path/to/python3` to choose another.
 - Data is stored in the `data/` folder of the project (ignored by git).
 - Gaps of more than four hours without samples (e.g. the Mac was asleep) never count as work.
 - If the footer says `restart tracker` after an update, stop the tracker and start it again.
