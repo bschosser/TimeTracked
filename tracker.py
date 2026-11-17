@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 ROOT = Path(__file__).parent
@@ -21,6 +21,15 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 HISTORY_LOCK = threading.RLock()
+HISTORY_LIMIT = 120_960
+
+# In-memory copy of samples.jsonl so requests don't re-read the whole file.
+# The (mtime, size) stamp detects writes made outside this process; the
+# revision changes whenever past records may have changed, so clients that
+# only fetch new samples know to reload everything.
+_history_cache: list[dict] = []
+_history_stamp: tuple[int, int] | None = None
+_history_revision = uuid4().hex
 
 
 class ManualBreakError(ValueError):
@@ -87,7 +96,7 @@ def reclassify_pause(started_at: str | None) -> None:
     if not started_at or not HISTORY_FILE.exists():
         return
     with HISTORY_LOCK:
-        records = read_history()
+        records = read_history_file()
         changed = False
         for record in records:
             if record.get("timestamp", "") >= started_at and record.get("paused") and not record.get("manual_break"):
@@ -95,8 +104,7 @@ def reclassify_pause(started_at: str | None) -> None:
                 record["working"] = record.get("mail_open", False)
                 changed = True
         if changed:
-            with HISTORY_FILE.open("w", encoding="utf-8") as history:
-                history.writelines(json.dumps(record) + "\n" for record in records)
+            write_history(records)
 
 
 def sample() -> dict:
@@ -113,11 +121,17 @@ def sample() -> dict:
 
 
 def append_sample() -> dict:
+    global _history_stamp
     DATA_DIR.mkdir(exist_ok=True)
     with HISTORY_LOCK:
+        cache = cached_history()
         record = sample()
         with HISTORY_FILE.open("a", encoding="utf-8") as history:
             history.write(json.dumps(record) + "\n")
+        cache.append(record)
+        if len(cache) > HISTORY_LIMIT + 1_000:
+            del cache[:-HISTORY_LIMIT]
+        _history_stamp = history_file_stamp()
     return record
 
 
@@ -135,9 +149,57 @@ def read_history_file() -> list[dict]:
     return records
 
 
-def read_history() -> list[dict]:
-    records = read_history_file()
-    return records[-120_960:]
+def history_file_stamp() -> tuple[int, int] | None:
+    try:
+        stat = HISTORY_FILE.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
+
+
+def cached_history() -> list[dict]:
+    """Return the live cache list; callers must hold HISTORY_LOCK while using it."""
+    global _history_cache, _history_stamp, _history_revision
+    with HISTORY_LOCK:
+        stamp = history_file_stamp()
+        if stamp != _history_stamp:
+            _history_cache = read_history_file()[-HISTORY_LIMIT:]
+            _history_stamp = stamp
+            _history_revision = uuid4().hex
+        return _history_cache
+
+
+def write_history(records: list[dict]) -> None:
+    global _history_cache, _history_stamp, _history_revision
+    with HISTORY_LOCK:
+        with HISTORY_FILE.open("w", encoding="utf-8") as history:
+            history.writelines(json.dumps(record) + "\n" for record in records)
+        _history_cache = records[-HISTORY_LIMIT:]
+        _history_stamp = history_file_stamp()
+        _history_revision = uuid4().hex
+
+
+def latest_sample() -> dict | None:
+    with HISTORY_LOCK:
+        cache = cached_history()
+        return cache[-1] if cache else None
+
+
+def history_since(since: str | None, revision: str | None) -> tuple[list[dict], str, bool]:
+    """Samples newer than `since`, or the full history if the client's copy is stale."""
+    with HISTORY_LOCK:
+        records = cached_history()
+        current_revision = _history_revision
+        if not since or revision != current_revision:
+            return records[-HISTORY_LIMIT:], current_revision, True
+        try:
+            since_time = datetime.fromisoformat(since.replace("Z", "+00:00"))
+            start = len(records)
+            while start > 0 and history_timestamp(records[start - 1]) > since_time:
+                start -= 1
+        except (KeyError, TypeError, ValueError):
+            return records[-HISTORY_LIMIT:], current_revision, True
+        return records[start:], current_revision, False
 
 
 def history_timestamp(record: dict) -> datetime:
@@ -229,8 +291,7 @@ def add_manual_break(start_value: str, end_value: str) -> dict:
         })
 
         records.sort(key=history_timestamp)
-        with HISTORY_FILE.open("w", encoding="utf-8") as history:
-            history.writelines(json.dumps(record) + "\n" for record in records)
+        write_history(records)
 
     return {"start": start.astimezone(timezone.utc).isoformat(), "end": end.astimezone(timezone.utc).isoformat()}
 
@@ -248,14 +309,16 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):  # noqa: N802
         path = urlparse(self.path).path
         if path == "/api/status":
-            records = read_history()
-            self.send_json({"current": records[-1] if records else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": signal_app(), "paused": is_paused()})
+            current = latest_sample()
+            self.send_json({"current": current if current else append_sample(), "interval": INTERVAL_SECONDS, "mail_app": signal_app(), "paused": is_paused()})
             return
         if path == "/api/settings":
             self.send_json({"mail_app": signal_app()})
             return
         if path == "/api/history":
-            self.send_json({"samples": read_history(), "interval": INTERVAL_SECONDS})
+            query = parse_qs(urlparse(self.path).query)
+            samples, revision, full = history_since(query.get("since", [None])[0], query.get("revision", [None])[0])
+            self.send_json({"samples": samples, "interval": INTERVAL_SECONDS, "revision": revision, "full": full})
             return
         if path.startswith("/api/"):
             self.send_json({"error": f"Unknown endpoint {path}."}, status=404)

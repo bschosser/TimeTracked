@@ -1,12 +1,26 @@
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
-const dayKey = (stamp) => new Date(stamp).toLocaleDateString("en-CA");
+const pad2 = (value) => String(value).padStart(2, "0");
+// Local calendar day as YYYY-MM-DD (same format as toLocaleDateString("en-CA"), but much faster).
+const dayKey = (stamp) => {
+  const date = stamp instanceof Date ? stamp : new Date(stamp);
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}`;
+};
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
 const maxCarryMinutes = 4 * 60;
 let selectedDayKey = dayKey(new Date());
 let availableDayKeys = [];
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
+const historyLimit = 120960;
+let historyState = { samples: [], interval: 60, revision: null };
+let statusState = null;
+
+// Parse each timestamp once; every chart reuses `time` (ms) and `day` (local YYYY-MM-DD).
+function prepareSample(sample) {
+  const time = Date.parse(sample.timestamp);
+  return Object.assign(sample, { time, day: dayKey(new Date(time)) });
+}
 
 async function readJson(response) {
   const text = await response.text();
@@ -19,8 +33,8 @@ async function readJson(response) {
 }
 
 function durationMinutes(samples, index, interval) {
-  const current = new Date(samples[index].timestamp).getTime();
-  const next = samples[index + 1] ? new Date(samples[index + 1].timestamp).getTime() : current + interval * 1000;
+  const current = samples[index].time;
+  const next = samples[index + 1] ? samples[index + 1].time : current + interval * 1000;
   const gap = Math.max(0, next - current);
   const creditedGap = samples[index].manual_break ? gap : Math.min(gap, maxCarryMinutes * 60000);
   return creditedGap / 60000;
@@ -54,19 +68,19 @@ function hidePauseOverlay() {
 }
 
 function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEndHour) {
-  const startOfDay = new Date(samples[0].timestamp);
+  const startOfDay = new Date(samples[0].time);
   startOfDay.setHours(0, 0, 0, 0);
   const chartStart = startOfDay.getTime() + chartStartHour * 60 * 60 * 1000;
   const chartLength = (chartEndHour - chartStartHour) * 60 * 60 * 1000;
   const segments = [];
   for (let index = 0; index < samples.length; index += 1) {
-    const start = new Date(samples[index].timestamp).getTime();
+    const start = samples[index].time;
     const end = start + durationMinutes(samples, index, interval) * 60000;
     const y = sampleWorking(samples[index]) ? 0 : 100;
     const startX = ((start - chartStart) / chartLength) * 100;
     const endX = ((end - chartStart) / chartLength) * 100;
     const previousSample = samples[index - 1];
-    const previousStart = previousSample ? new Date(previousSample.timestamp).getTime() : start;
+    const previousStart = previousSample ? previousSample.time : start;
     const sameManualBreak = samples[index].manual_break_id && samples[index].manual_break_id === previousSample?.manual_break_id;
     const breakBefore = index > 0 && start - previousStart > maxCarryMinutes * 60000 && !sameManualBreak;
     const previous = segments[segments.length - 1];
@@ -118,10 +132,9 @@ function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEnd
 function renderHistory(payload) {
   const allSamples = payload.samples;
   const todayKey = dayKey(new Date());
-  availableDayKeys = Array.from(new Set([
-    todayKey,
-    ...allSamples.filter(sampleWorking).map((sample) => dayKey(sample.timestamp)),
-  ])).filter((key) => key <= todayKey).sort();
+  const dayKeys = new Set([todayKey]);
+  for (const sample of allSamples) if (sampleWorking(sample)) dayKeys.add(sample.day);
+  availableDayKeys = Array.from(dayKeys).filter((key) => key <= todayKey).sort();
   if (!availableDayKeys.includes(selectedDayKey)) {
     selectedDayKey = availableDayKeys.filter((key) => key < selectedDayKey).at(-1) || todayKey;
   }
@@ -137,17 +150,17 @@ function renderHistory(payload) {
   $("daily-hours-label").textContent = selectedLabel;
   $("manual-break-tools").hidden = !isSelectedToday;
 
-  const samples = allSamples.filter((sample) => dayKey(sample.timestamp) === selectedDayKey);
+  const samples = allSamples.filter((sample) => sample.day === selectedDayKey);
   const minutes = samples.reduce((total, sample, index) => total + (sampleWorking(sample) ? durationMinutes(samples, index, payload.interval) : 0), 0);
   const observedMinutes = samples.reduce((total, sample, index) => total + durationMinutes(samples, index, payload.interval), 0);
   const percent = observedMinutes ? Math.round((minutes / observedMinutes) * 100) : 0;
   const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recent = allSamples.filter((sample) => new Date(sample.timestamp).getTime() >= sevenDaysAgo);
+  const recent = allSamples.filter((sample) => sample.time >= sevenDaysAgo);
   const dayTotals = {};
   const breakTotals = {};
-  recent.forEach((sample) => {
-    const key = dayKey(sample.timestamp);
-    const duration = durationMinutes(recent, recent.indexOf(sample), payload.interval);
+  recent.forEach((sample, index) => {
+    const key = sample.day;
+    const duration = durationMinutes(recent, index, payload.interval);
     dayTotals[key] = (dayTotals[key] || 0) + (sampleWorking(sample) ? duration : 0);
     breakTotals[key] = (breakTotals[key] || 0) + (sample.paused ? duration : 0);
   });
@@ -175,8 +188,8 @@ function renderHistory(payload) {
   const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, working: 0 }));
   samples.forEach((sample, index) => {
     const minutesInSample = durationMinutes(samples, index, payload.interval);
-    const start = new Date(sample.timestamp);
-    const end = new Date(start.getTime() + minutesInSample * 60000);
+    const start = new Date(sample.time);
+    const end = new Date(sample.time + minutesInSample * 60000);
     let cursor = start;
     while (cursor < end) {
       const hour = cursor.getHours();
@@ -189,11 +202,11 @@ function renderHistory(payload) {
     }
   });
   const workingSamples = samples.filter((sample) => sampleWorking(sample));
-  const firstObservedHour = new Date(samples[0].timestamp).getHours();
-  const firstWorkingHour = workingSamples.length ? new Date(workingSamples[0].timestamp).getHours() : firstObservedHour;
+  const firstObservedHour = new Date(samples[0].time).getHours();
+  const firstWorkingHour = workingSamples.length ? new Date(workingSamples[0].time).getHours() : firstObservedHour;
   const lastWorkingSample = workingSamples[workingSamples.length - 1];
   const lastWorkingIndex = lastWorkingSample ? samples.indexOf(lastWorkingSample) : -1;
-  const lastWorkingEnd = lastWorkingSample ? new Date(lastWorkingSample.timestamp).getTime() + durationMinutes(samples, lastWorkingIndex, payload.interval) * 60000 : 18 * 60 * 60000;
+  const lastWorkingEnd = lastWorkingSample ? lastWorkingSample.time + durationMinutes(samples, lastWorkingIndex, payload.interval) * 60000 : 18 * 60 * 60000;
   const lastWorkingHour = lastWorkingSample ? new Date(lastWorkingEnd).getHours() + (new Date(lastWorkingEnd).getMinutes() ? 1 : 0) : 18;
   const chartStartHour = Math.max(0, Math.min(firstWorkingHour, 23));
   const chartEndHour = Math.min(24, Math.max(18, lastWorkingHour));
@@ -234,12 +247,11 @@ function renderAverageDay(payload) {
   const binMinutes = 10;
   const binsPerDay = (24 * 60) / binMinutes;
   const days = {};
-  payload.samples.filter((sample) => {
-    const timestamp = new Date(sample.timestamp).getTime();
-    return timestamp >= cutoff.getTime() && timestamp < endOfCompletedDays.getTime();
-  }).forEach((sample) => {
-    const date = new Date(sample.timestamp);
-    const key = dayKey(sample.timestamp);
+  const cutoffTime = cutoff.getTime();
+  const endTime = endOfCompletedDays.getTime();
+  payload.samples.filter((sample) => sample.time >= cutoffTime && sample.time < endTime).forEach((sample) => {
+    const date = new Date(sample.time);
+    const key = sample.day;
     if (!days[key]) days[key] = Array(binsPerDay).fill(null);
     const bin = Math.floor((date.getHours() * 60 + date.getMinutes()) / binMinutes);
     days[key][bin] = sampleWorking(sample) ? 1 : 0;
@@ -318,7 +330,7 @@ function moveSelectedDay(direction) {
   const target = availableDayKeys[index + direction];
   if (!target) return;
   selectedDayKey = target;
-  refresh();
+  render();
 }
 
 function renderWeek(payload) {
@@ -330,13 +342,13 @@ function renderWeek(payload) {
     date.setDate(date.getDate() + index);
     return { date, key: dayKey(date), minutes: 0, breakMinutes: 0, observed: 0 };
   });
-  const weekSamples = payload.samples.filter((sample) => {
-    const timestamp = new Date(sample.timestamp);
-    return timestamp >= weekStart && timestamp < weekEnd;
-  });
+  const weekStartTime = weekStart.getTime();
+  const weekEndTime = weekEnd.getTime();
+  const daysByKey = new Map(days.map((day) => [day.key, day]));
+  const weekSamples = payload.samples.filter((sample) => sample.time >= weekStartTime && sample.time < weekEndTime);
   weekSamples.forEach((sample, index) => {
     const minutes = durationMinutes(weekSamples, index, payload.interval);
-    const day = days.find((item) => item.key === dayKey(sample.timestamp));
+    const day = daysByKey.get(sample.day);
     if (!day) return;
     day.observed += minutes;
     if (sampleWorking(sample)) day.minutes += minutes;
@@ -488,13 +500,44 @@ async function addManualBreak(event) {
   } finally { submit.disabled = false; }
 }
 
-async function refresh() {
+function historyUrl() {
+  const last = historyState.samples.at(-1);
+  if (!last || !historyState.revision) return "/api/history";
+  return `/api/history?since=${encodeURIComponent(last.timestamp)}&revision=${encodeURIComponent(historyState.revision)}`;
+}
+
+// Fetch only samples newer than the ones already loaded. The server answers
+// with the full history (full: true) when past records changed, e.g. after a
+// manual break, or when this is the first load.
+async function loadHistory() {
+  const payload = await readJson(await fetch(historyUrl()));
+  const incoming = payload.samples.map(prepareSample);
+  const samples = payload.full === false ? historyState.samples.concat(incoming) : incoming;
+  historyState = {
+    samples: samples.length > historyLimit ? samples.slice(-historyLimit) : samples,
+    interval: payload.interval,
+    revision: payload.revision ?? null,
+  };
+}
+
+function render() {
+  if (statusState) renderStatus(statusState);
+  renderHistory(historyState);
+}
+
+async function fetchAndRender() {
   try {
-    const [statusResponse, historyResponse] = await Promise.all([fetch("/api/status"), fetch("/api/history")]);
-    const status = await readJson(statusResponse);
-    const history = await readJson(historyResponse);
-    renderStatus(status); renderHistory(history);
+    const [status] = await Promise.all([fetch("/api/status").then(readJson), loadHistory()]);
+    statusState = status;
+    render();
   } catch { $("last-updated").textContent = "Tracker offline"; }
+}
+
+// Run refreshes one after another so incremental history fetches never overlap.
+let refreshQueue = Promise.resolve();
+function refresh() {
+  refreshQueue = refreshQueue.then(fetchAndRender);
+  return refreshQueue;
 }
 
 $("pause-button").addEventListener("click", pauseTracking);
@@ -503,13 +546,14 @@ $("overlay-work").addEventListener("click", () => resumeTracking(false));
 $("today-label").textContent = new Date().toLocaleDateString([], { month: "short", day: "numeric" });
 $("previous-day").addEventListener("click", () => moveSelectedDay(-1));
 $("next-day").addEventListener("click", () => moveSelectedDay(1));
-$("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; refresh(); });
-$("next-week").addEventListener("click", () => { selectedWeekOffset += 1; refresh(); });
-$("average-window").addEventListener("change", (event) => { averageWindowDays = Number(event.target.value); refresh(); });
+$("previous-week").addEventListener("click", () => { selectedWeekOffset -= 1; render(); });
+$("next-week").addEventListener("click", () => { selectedWeekOffset += 1; render(); });
+$("average-window").addEventListener("change", (event) => { averageWindowDays = Number(event.target.value); render(); });
 $("signal-app-toggle").addEventListener("click", () => setSignalAppFormOpen($("signal-app-form").hidden));
 $("signal-app-form").addEventListener("submit", saveSignalApp);
 $("manual-break-toggle").addEventListener("click", () => setManualBreakFormOpen($("manual-break-form").hidden));
 $("manual-break-cancel").addEventListener("click", () => setManualBreakFormOpen(false));
 $("manual-break-form").addEventListener("submit", addManualBreak);
 refresh();
-setInterval(refresh, 30000);
+setInterval(() => { if (!document.hidden) refresh(); }, 30000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
