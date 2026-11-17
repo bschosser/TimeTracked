@@ -566,7 +566,7 @@ async function addManualBreak(event) {
 
 // Palettes are defined in palettes.css; "original" is the default from styles.css.
 const PALETTES = [
-  { id: "original", name: "Original" },
+  { id: "original", name: "Mint & coral" },
   { id: "harvest-gold", name: "Harvest gold" },
   { id: "moss-rust", name: "Moss & rust" },
   { id: "autumn-dusk", name: "Autumn dusk" },

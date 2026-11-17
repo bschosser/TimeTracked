@@ -1,5 +1,5 @@
 /*
-  Color palettes for the dashboard. The default ("original") palette is defined in styles.css.
+  Color palettes for the dashboard. The default palette ("Mint & coral", id "original") is defined in styles.css.
   Each palette below overrides the same variables; pick one with the selector in the footer
   or with ?palette=<name> in the URL. To try a new palette, copy a block, give it a new name,
   add that name to PALETTES in app.js, then just reload the page (no tracker restart needed).
