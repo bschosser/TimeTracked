@@ -57,16 +57,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var trackerExternallyRunning = false
     private var statusTimer: Timer?
     private var pauseWindow: NSWindow?
-    // Chosen at run time, so one universal build works on Apple Silicon and Intel Macs.
-    // DESK_SIGNAL_PYTHON overrides the search; otherwise Homebrew (Apple Silicon, then Intel)
-    // is preferred over the system python3 that comes with the Command Line Tools.
-    private lazy var pythonPath: String = {
+    // python3 is chosen at run time, so one universal build works on Apple Silicon and Intel Macs.
+    // DESK_SIGNAL_PYTHON is tried first; then Homebrew (Apple Silicon, then Intel), then the
+    // system python3 from the Command Line Tools. A candidate that cannot start on this Mac
+    // (e.g. "Bad CPU type" from a Homebrew copied over from another Mac) is skipped.
+    private var pythonCandidates: [String] {
+        var candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
         if let custom = ProcessInfo.processInfo.environment["DESK_SIGNAL_PYTHON"], !custom.isEmpty {
-            return custom
+            candidates.insert(custom, at: 0)
         }
-        let candidates = ["/opt/homebrew/bin/python3", "/usr/local/bin/python3", "/usr/bin/python3"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/python3"
-    }()
+        return candidates.filter { FileManager.default.isExecutableFile(atPath: $0) }
+    }
+    private var workingPythonPath: String?
     private let port = "8765"
 
     private var projectRoot: URL {
@@ -155,17 +157,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startTracker() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: pythonPath)
-        process.arguments = [projectRoot.appendingPathComponent("tracker.py").path]
-        process.currentDirectoryURL = projectRoot
-        process.environment = ProcessInfo.processInfo.environment.merging(["PORT": port]) { _, new in new }
-        do {
-            try process.run()
-            tracker = process
-        } catch {
-            showError("Could not start tracker", error.localizedDescription)
+        let candidates = workingPythonPath.map { [$0] } ?? pythonCandidates
+        var failures: [String] = []
+        for pythonPath in candidates {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: pythonPath)
+            process.arguments = [projectRoot.appendingPathComponent("tracker.py").path]
+            process.currentDirectoryURL = projectRoot
+            process.environment = ProcessInfo.processInfo.environment.merging(["PORT": port]) { _, new in new }
+            do {
+                try process.run()
+                tracker = process
+                workingPythonPath = pythonPath
+                return
+            } catch {
+                failures.append("\(pythonPath): \(error.localizedDescription)")
+            }
         }
+        workingPythonPath = nil
+        let details = failures.isEmpty ? "No python3 found. Install Python 3 (e.g. with Homebrew)." : failures.joined(separator: "\n")
+        showError("Could not start tracker", details)
     }
 
     private func ensureTracker() {
