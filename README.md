@@ -22,7 +22,7 @@ These views show the dashboard in demo mode (generated sample data, not real wor
 
 Open http://127.0.0.1:8765/?demo to see the dashboard with generated sample data instead of your own history, for example to take screenshots. Demo mode does not change anything: pausing, breaks and app changes are disabled.
 
-Pick a color palette with the **Palette** selector in the footer; the choice is remembered in this browser. You can also link to one directly, e.g. http://127.0.0.1:8765/?demo&palette=autumn-rose. Palettes are defined in `palettes.css`: copy a block, rename it, add the name to `PALETTES` in `app.js`, and reload the page. CSS and JavaScript changes only need a page reload, not a tracker restart.
+Pick a color palette with the **Palette** selector in the footer; the choice is remembered in this browser. You can also link to one directly, e.g. http://127.0.0.1:8765/?demo&palette=moss-rust. Palettes are defined in `palettes.css`: copy a block, rename it, add the name to `PALETTES` in `app.js`, and reload the page. CSS and JavaScript changes only need a page reload, not a tracker restart.
 
 The footer also shows the dashboard version. If it says `restart tracker`, the running tracker is older than the page: stop it with `pkill -f '[p]ython3 tracker.py'` and start it again.
 

@@ -17,23 +17,23 @@
     --on-dark, --on-dark-muted, --dark-*      text, borders and inputs on dark panels
 */
 
-/* Autumn rose: warm cream, aubergine ink, blush panel, cranberry lines, terracotta bars. */
-:root[data-palette="autumn-rose"] {
-  --ink:#2e1f27; --muted:#8a7479; --line:#ead9cf; --paper:#f8f1ea; --mint:#f3c9c8; --green:#8c2f39; --coral:#e07a5f; --sun:#f2b544;
-  --card:#fffaf5; --grid:#efe3da; --idle:#efe2da; --break:#e3cfc6; --faint:#a8928f; --disabled:#cbb7b2; --hover:#f7e4e1; --pulse-ring:#f3d3d0; --body-muted:#6f5a5f; --meter-track:#e6a9a9; --score-foot:#7d4b52;
-  --on-dark:#f8ece6; --on-dark-muted:#cdb8b8; --dark-panel:#3a2831; --dark-line:#4a3640; --dark-border:#5a4450; --dark-input-border:#6a5260;
+/* Harvest gold: one warm family (wheat, bronze, ochre) with pumpkin working bars. */
+:root[data-palette="harvest-gold"] {
+  --ink:#2a2118; --muted:#857b6c; --line:#e6dccb; --paper:#f8f3e8; --mint:#f0dcae; --green:#7a4f1d; --coral:#d9822b; --sun:#f2c14e;
+  --card:#fffcf6; --grid:#ece4d4; --idle:#ece3d2; --break:#ddd0b9; --faint:#a39684; --disabled:#c8bca8; --hover:#f3e8d2; --pulse-ring:#efdfbf; --body-muted:#6c604f; --meter-track:#ddbf82; --score-foot:#7a5a2c;
+  --on-dark:#f6efe2; --on-dark-muted:#c9bca8; --dark-panel:#382d22; --dark-line:#45382b; --dark-border:#554636; --dark-input-border:#665541;
 }
 
-/* Maple & blush: espresso ink, peach panel, maple-red lines, dusty-pink bars, amber highlights. */
-:root[data-palette="maple-blush"] {
-  --ink:#3b2a20; --muted:#8c7a6e; --line:#eddcd0; --paper:#faf4ee; --mint:#f6d1c1; --green:#b5523b; --coral:#d98a9c; --sun:#e9a03b;
-  --card:#fffbf7; --grid:#f1e4da; --idle:#f0e3da; --break:#e6d3c8; --faint:#ab978b; --disabled:#cdbcb1; --hover:#f8e6dc; --pulse-ring:#f5d9cc; --body-muted:#6e5b4f; --meter-track:#eba98f; --score-foot:#8a4a37;
-  --on-dark:#faefe7; --on-dark-muted:#d2bfb2; --dark-panel:#4a362a; --dark-line:#574235; --dark-border:#65503f; --dark-input-border:#76604e;
+/* Moss & rust: forest and sage greens throughout, rust as the single warm accent. */
+:root[data-palette="moss-rust"] {
+  --ink:#1f2a22; --muted:#78806f; --line:#dde0d2; --paper:#f3f2ea; --mint:#cdd8b6; --green:#4a5d32; --coral:#b5562d; --sun:#eba57e;
+  --card:#fdfdf8; --grid:#e6e8dc; --idle:#e5e8db; --break:#d3d8c5; --faint:#969c8a; --disabled:#bcc1b0; --hover:#e9eedd; --pulse-ring:#dbe4c9; --body-muted:#5f6858; --meter-track:#a9bb8a; --score-foot:#4f603a;
+  --on-dark:#eef1e6; --on-dark-muted:#bcc4b2; --dark-panel:#2a372d; --dark-line:#374538; --dark-border:#455546; --dark-input-border:#556656;
 }
 
-/* Plum harvest: plum ink, mauve panel, olive lines, pumpkin bars, golden highlights. */
-:root[data-palette="plum-harvest"] {
-  --ink:#3a2338; --muted:#8a7688; --line:#e8dad9; --paper:#f6efe9; --mint:#e8c6d6; --green:#5f6b3a; --coral:#d1603d; --sun:#e7b04f;
-  --card:#fffaf6; --grid:#ede2dd; --idle:#eee2dc; --break:#e0d0cc; --faint:#a3929f; --disabled:#c9b9c3; --hover:#f3e5ec; --pulse-ring:#ead3df; --body-muted:#6c5869; --meter-track:#cfa3b8; --score-foot:#6b4a63;
-  --on-dark:#f7ecf2; --on-dark-muted:#cdb9c8; --dark-panel:#4a2f47; --dark-line:#573a54; --dark-border:#664762; --dark-input-border:#765673;
+/* Autumn dusk: cool slate and fog greys, copper working bars and amber highlights. */
+:root[data-palette="autumn-dusk"] {
+  --ink:#232a33; --muted:#7b818a; --line:#dcdedf; --paper:#f2f1ee; --mint:#cfd6dc; --green:#3e5266; --coral:#c06a3a; --sun:#e0a458;
+  --card:#fbfbfa; --grid:#e4e6e7; --idle:#e3e5e6; --break:#d0d4d7; --faint:#979ca3; --disabled:#bcc0c5; --hover:#e6eaee; --pulse-ring:#d6dee5; --body-muted:#5d646d; --meter-track:#9fb0bf; --score-foot:#44576a;
+  --on-dark:#eef0f2; --on-dark-muted:#b8bfc7; --dark-panel:#2d3540; --dark-line:#3a4350; --dark-border:#48525f; --dark-input-border:#586371;
 }
