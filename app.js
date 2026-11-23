@@ -16,9 +16,9 @@ const formatters = {
   clock: new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }),
 };
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
-// A sample's state counts until the next sample, but for at most this long. Samples arrive
-// every minute, so a longer gap means the Mac was asleep or the tracker was off.
-const maxCarryMinutes = 15;
+// A sample's state counts until the next sample, but for at most four hours
+// (the same limit applies to inactivity, see IDLE_MINUTES in tracker.py).
+const maxCarryMinutes = 4 * 60;
 let selectedDayKey = dayKey(new Date());
 let availableDayKeys = [];
 let selectedWeekOffset = 0;

@@ -9,7 +9,7 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -24,7 +24,9 @@ INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 # After this many minutes without keyboard/mouse input, time no longer counts as work,
 # even if the signal app is still open (e.g. Mail left open over the weekend).
-IDLE_MINUTES = float(os.getenv("IDLE_MINUTES", "30"))
+# Matches the dashboard's four-hour limit for gaps between samples: up to four hours
+# of inactivity still count, anything beyond does not.
+IDLE_MINUTES = float(os.getenv("IDLE_MINUTES", str(4 * 60)))
 HISTORY_LOCK = threading.RLock()
 # Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
 APP_VERSION = "2026-11-23.1"
@@ -72,7 +74,7 @@ def set_signal_app(value: object) -> str:
     name = value.strip()
     if not name or len(name) > 100 or any(char in name for char in "\r\n\0"):
         raise SignalAppError("Enter a valid app process name (1–100 characters).")
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_FILE.write_text(json.dumps({"mail_app": name}), encoding="utf-8")
     return name
 
@@ -153,20 +155,10 @@ def mark_away(records: list[dict], start: datetime, end: datetime) -> int:
 
 def append_sample() -> dict:
     global _history_stamp
-    DATA_DIR.mkdir(exist_ok=True)
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     with HISTORY_LOCK:
         cache = cached_history()
         record = sample()
-        previous = cache[-1] if cache else None
-        if record["idle"] and previous is not None and not previous.get("idle"):
-            # Just went idle: the user has been away since the last input, so the
-            # samples since then were not work either. Correct them once.
-            away_since = datetime.now(timezone.utc) - timedelta(seconds=record.get("idle_seconds", 0))
-            records = read_history_file()
-            mark_away(records, away_since, datetime.now(timezone.utc) + timedelta(days=1))
-            records.append(record)
-            write_history(records)
-            return record
         with HISTORY_FILE.open("a", encoding="utf-8") as history:
             history.write(json.dumps(record) + "\n")
         cache.append(record)
@@ -411,7 +403,7 @@ class Handler(SimpleHTTPRequestHandler):
             paused = False
         else:
             paused = not is_paused()
-        DATA_DIR.mkdir(exist_ok=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
         pause_data: dict[str, object] = {"paused": paused}
         if paused:
             pause_data["started_at"] = datetime.now(timezone.utc).isoformat()
