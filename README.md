@@ -42,6 +42,7 @@ Stop it with `pkill -f '[p]ython3 tracker.py'`. Run only one of the two; both us
 
 - The menu-bar app uses Homebrew's `python3` if installed, otherwise the system one; set `DESK_SIGNAL_PYTHON=/path/to/python3` to choose another.
 - Data is stored in the `data/` folder of the project (ignored by git).
-- Each sample's state counts for up to four hours: gaps between samples (e.g. the Mac was asleep) and time without keyboard or mouse input both count for at most four hours, so Mail left open over a weekend stops counting four hours after you left. Change the inactivity limit by starting the app or tracker with e.g. `IDLE_MINUTES=180`.
+- Gaps between samples (e.g. the Mac was asleep) count for at most four hours.
+- Time without keyboard or mouse input keeps counting (meetings, reading) unless it lasts four hours: then the whole inactive stretch is taken off, so Mail left open over a weekend stops counting when you left. Change the limit by starting the app or tracker with e.g. `IDLE_MINUTES=180`.
 - To correct a past period that was counted by mistake (e.g. Mail left open over a weekend before idle detection existed), run `python3 tracker.py --mark-away "2026-11-20 13:00" "2026-11-23 08:00"` in the project folder (local times), then reload the dashboard.
 - If the footer says `restart tracker` after an update, stop the tracker and start it again.

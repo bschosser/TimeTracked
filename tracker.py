@@ -9,7 +9,7 @@ import re
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -23,9 +23,9 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 # After this many minutes without keyboard/mouse input, time no longer counts as work,
-# even if the signal app is still open (e.g. Mail left open over the weekend).
-# Matches the dashboard's four-hour limit for gaps between samples: up to four hours
-# of inactivity still count, anything beyond does not.
+# even if the signal app is still open (e.g. Mail left open over the weekend), and the
+# inactive time since the last input is taken off as well. Shorter inactivity (meetings,
+# reading) keeps counting.
 IDLE_MINUTES = float(os.getenv("IDLE_MINUTES", str(4 * 60)))
 HISTORY_LOCK = threading.RLock()
 # Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
@@ -159,6 +159,16 @@ def append_sample() -> dict:
     with HISTORY_LOCK:
         cache = cached_history()
         record = sample()
+        previous = cache[-1] if cache else None
+        if record["idle"] and previous is not None and not previous.get("idle"):
+            # Just crossed the inactivity limit: nobody has been at the computer since the
+            # last input, so take the samples since then off as well (once, on the transition).
+            now = datetime.now(timezone.utc)
+            records = read_history_file()
+            mark_away(records, now - timedelta(seconds=record.get("idle_seconds", 0)), now + timedelta(days=1))
+            records.append(record)
+            write_history(records)
+            return record
         with HISTORY_FILE.open("a", encoding="utf-8") as history:
             history.write(json.dumps(record) + "\n")
         cache.append(record)
