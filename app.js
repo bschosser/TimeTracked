@@ -1,5 +1,5 @@
 // Keep in sync with APP_VERSION in tracker.py; shown in the footer.
-const APP_VERSION = "2026-11-17.4";
+const APP_VERSION = "2026-11-23.1";
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -16,7 +16,9 @@ const formatters = {
   clock: new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }),
 };
 const sampleWorking = (sample) => sample.working ?? sample.mail_open;
-const maxCarryMinutes = 4 * 60;
+// A sample's state counts until the next sample, but for at most this long. Samples arrive
+// every minute, so a longer gap means the Mac was asleep or the tracker was off.
+const maxCarryMinutes = 15;
 let selectedDayKey = dayKey(new Date());
 let availableDayKeys = [];
 let selectedWeekOffset = 0;
@@ -112,7 +114,10 @@ function renderStatus(payload) {
   $("pause-button").textContent = payload.paused ? "Resume tracking" : "Pause tracking";
   $("pause-button").classList.toggle("paused", payload.paused);
   if (payload.paused) showPauseOverlay(); else hidePauseOverlay();
-  $("state-note").textContent = payload.paused ? "Manual pause is active" : current.working ? `Counting time while ${payload.mail_app} is open` : `${payload.mail_app} is not open`;
+  $("state-note").textContent = payload.paused ? "Manual pause is active"
+    : current.working ? `Counting time while ${payload.mail_app} is open`
+    : current.idle && current.mail_open ? `${payload.mail_app} is open, but you seem to be away — not counting`
+    : `${payload.mail_app} is not open`;
   $("last-updated").textContent = `Updated ${formatters.clock.format(new Date(current.timestamp))}`;
 }
 

@@ -2,12 +2,14 @@
 """Private local working-hours tracker for macOS."""
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import re
 import subprocess
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -20,9 +22,12 @@ PAUSE_FILE = DATA_DIR / "pause.json"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 INTERVAL_SECONDS = int(os.getenv("TRACK_INTERVAL", "60"))
 DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
+# After this many minutes without keyboard/mouse input, time no longer counts as work,
+# even if the signal app is still open (e.g. Mail left open over the weekend).
+IDLE_MINUTES = float(os.getenv("IDLE_MINUTES", "30"))
 HISTORY_LOCK = threading.RLock()
 # Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
-APP_VERSION = "2026-11-17.4"
+APP_VERSION = "2026-11-23.1"
 HISTORY_LIMIT = 120_960
 
 # In-memory copy of samples.jsonl so requests don't re-read the whole file.
@@ -80,6 +85,12 @@ def is_app_open(app_name: str) -> bool:
     return result.returncode == 0
 
 
+def idle_seconds() -> float | None:
+    """Seconds since the last keyboard/mouse input on macOS, or None if unknown."""
+    match = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', command_output(["ioreg", "-c", "IOHIDSystem", "-d", "4"]))
+    return int(match.group(1)) / 1e9 if match else None
+
+
 def is_paused() -> bool:
     try:
         return json.loads(PAUSE_FILE.read_text(encoding="utf-8")).get("paused", False)
@@ -103,7 +114,7 @@ def reclassify_pause(started_at: str | None) -> None:
         for record in records:
             if record.get("timestamp", "") >= started_at and record.get("paused") and not record.get("manual_break"):
                 record["paused"] = False
-                record["working"] = record.get("mail_open", False)
+                record["working"] = record.get("mail_open", False) and not record.get("idle", False)
                 changed = True
         if changed:
             write_history(records)
@@ -113,13 +124,31 @@ def sample() -> dict:
     app_name = signal_app()
     mail_open = is_app_open(app_name)
     paused = is_paused()
-    return {
+    idle_for = idle_seconds()
+    idle = idle_for is not None and idle_for >= IDLE_MINUTES * 60
+    record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mail_open": mail_open,
-        "working": mail_open and not paused,
+        "working": mail_open and not paused and not idle,
         "paused": paused,
+        "idle": idle,
         "signal_app": app_name,
     }
+    if idle_for is not None:
+        record["idle_seconds"] = round(idle_for)
+    return record
+
+
+def mark_away(records: list[dict], start: datetime, end: datetime) -> int:
+    """Mark samples in [start, end) as not working because nobody was at the computer."""
+    changed = 0
+    for record in records:
+        if start <= history_timestamp(record) < end and not record.get("manual_break"):
+            if record.get("working", record.get("mail_open")):
+                changed += 1
+            record["working"] = False
+            record["idle"] = True
+    return changed
 
 
 def append_sample() -> dict:
@@ -128,6 +157,16 @@ def append_sample() -> dict:
     with HISTORY_LOCK:
         cache = cached_history()
         record = sample()
+        previous = cache[-1] if cache else None
+        if record["idle"] and previous is not None and not previous.get("idle"):
+            # Just went idle: the user has been away since the last input, so the
+            # samples since then were not work either. Correct them once.
+            away_since = datetime.now(timezone.utc) - timedelta(seconds=record.get("idle_seconds", 0))
+            records = read_history_file()
+            mark_away(records, away_since, datetime.now(timezone.utc) + timedelta(days=1))
+            records.append(record)
+            write_history(records)
+            return record
         with HISTORY_FILE.open("a", encoding="utf-8") as history:
             history.write(json.dumps(record) + "\n")
         cache.append(record)
@@ -280,12 +319,13 @@ def add_manual_break(start_value: str, end_value: str) -> dict:
 
         mail_open_at_end = bool(end_source.get("mail_open", end_source.get("working", False))) if end_source else mail_open_at_start
         paused_at_end = bool(end_source.get("paused", False)) if end_source else False
+        idle_at_end = bool(end_source.get("idle", False)) if end_source else False
         end_record = boundary_record(end)
         if not end_record:
             end_record = {"timestamp": end.astimezone(timezone.utc).isoformat(), "mail_open": mail_open_at_end}
             records.append(end_record)
         end_record.update({
-            "working": mail_open_at_end and not paused_at_end,
+            "working": mail_open_at_end and not paused_at_end and not idle_at_end,
             "paused": paused_at_end,
             "manual_break": False,
             "manual_break_id": break_id,
@@ -398,14 +438,46 @@ class Handler(SimpleHTTPRequestHandler):
         return
 
 
-if __name__ == "__main__":
+def parse_local_time(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace(" ", "T"))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(f"expected a time like '2026-11-20 13:00', got {value!r}") from error
+    return parsed.astimezone() if parsed.tzinfo is None else parsed
+
+
+def mark_away_command(start: datetime, end: datetime) -> None:
+    if start >= end:
+        raise SystemExit("The end time must be after the start time.")
+    with HISTORY_LOCK:
+        records = read_history_file()
+        changed = mark_away(records, start, end)
+        write_history(records)
+    print(f"Marked {changed} samples between {start:%a %Y-%m-%d %H:%M} and {end:%a %Y-%m-%d %H:%M} as away (not working).")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Private local working-hours tracker.")
+    parser.add_argument("--mark-away", nargs=2, metavar=("START", "END"), type=parse_local_time,
+                        help="mark a past period as not working, e.g. --mark-away '2026-11-20 13:00' '2026-11-23 08:00' (local time)")
+    args = parser.parse_args()
+    if args.mark_away:
+        mark_away_command(*args.mark_away)
+        return
+
     port = int(os.getenv("PORT", "8765"))
+    # Bind first: if another tracker already uses the port, exit before recording anything.
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     append_sample()
     threading.Thread(target=sampler_loop, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"Working hours tracker running at http://127.0.0.1:{port}")
     print(f"Sampling every {INTERVAL_SECONDS}s; watching {signal_app()}")
+    print(f"Idle after {IDLE_MINUTES:g} minutes without keyboard or mouse input")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
+
+
+if __name__ == "__main__":
+    main()
