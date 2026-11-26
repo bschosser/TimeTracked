@@ -1,5 +1,5 @@
 // Keep in sync with APP_VERSION in tracker.py; shown in the footer.
-const APP_VERSION = "2026-11-23.1";
+const APP_VERSION = "2026-11-26.2";
 const $ = (id) => document.getElementById(id);
 const formatHours = (minutes) => (minutes / 60).toFixed(1);
 const pad2 = (value) => String(value).padStart(2, "0");
@@ -24,28 +24,58 @@ let availableDayKeys = [];
 let selectedWeekOffset = 0;
 let averageWindowDays = 7;
 const historyLimit = 120960;
-let historyState = { samples: [], interval: 60, revision: null, days: new Map(), workingDays: new Set() };
+// `segments` are the stored stretches as the tracker sends them; `samples` are the same
+// stretches cut at local midnight, each with its credited duration, which all charts use.
+let historyState = { segments: [], samples: [], interval: 60, revision: null, days: new Map(), workingDays: new Set() };
 let statusState = null;
 
-// Parse each timestamp once; every chart reuses `time` (ms) and `day` (local YYYY-MM-DD).
-// Samples arrive in time order, so the day only has to be recomputed when one crosses midnight.
-function prepareSamples(samples) {
-  let dayStart = Infinity;
-  let dayEnd = -Infinity;
-  let key = "";
-  for (const sample of samples) {
-    const time = Date.parse(sample.timestamp);
-    if (!(time >= dayStart && time < dayEnd)) {
-      const date = new Date(time);
-      key = dayKey(date);
-      date.setHours(0, 0, 0, 0);
-      dayStart = date.getTime();
-      date.setDate(date.getDate() + 1);
-      dayEnd = date.getTime();
-    }
-    sample.time = time;
-    sample.day = key;
-    sample.minute = -1;
+// The tracker stores one record per stretch of unchanged state: `timestamp` is when it
+// started, `until` the last sample that confirmed it (older files have one record per
+// sample, i.e. no `until`). Parse both once.
+function prepareSegments(segments) {
+  for (const segment of segments) {
+    segment.time = Date.parse(segment.timestamp);
+    segment.untilTime = Math.max(segment.time, segment.until ? Date.parse(segment.until) : segment.time);
+  }
+  return segments;
+}
+
+function nextMidnight(time) {
+  const date = new Date(time);
+  date.setHours(24, 0, 0, 0);
+  return date.getTime();
+}
+
+// A stretch counts from its start to its last sample, plus the gap to the next stretch,
+// but that gap for at most four hours (manual breaks count fully). Cut at local midnight
+// so every piece belongs to one day. `observedEnd` is where the last sample was taken.
+function buildSamples(segments, interval) {
+  const samples = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    const previous = segments[index - 1];
+    const next = segments[index + 1];
+    const gap = next ? Math.max(0, next.time - segment.untilTime) : interval * 1000;
+    let end = segment.untilTime + (segment.manual_break ? gap : Math.min(gap, maxCarryMinutes * 60000));
+    if (next) end = Math.max(segment.time, Math.min(end, next.time));
+    const sameManualBreak = segment.manual_break_id && segment.manual_break_id === previous?.manual_break_id;
+    let gapBefore = Boolean(previous) && segment.time - previous.untilTime > maxCarryMinutes * 60000 && !sameManualBreak;
+    let time = segment.time;
+    do {
+      const pieceEnd = Math.min(end, nextMidnight(time));
+      samples.push({
+        ...segment,
+        time,
+        end: pieceEnd,
+        observedEnd: Math.min(segment.untilTime, pieceEnd), // < time: no sample in this piece
+        minutes: (pieceEnd - time) / 60000,
+        day: dayKey(time),
+        minute: -1,
+        gapBefore,
+      });
+      gapBefore = false;
+      time = pieceEnd;
+    } while (time < end);
   }
   return samples;
 }
@@ -95,12 +125,8 @@ async function readJson(response) {
   }
 }
 
-function durationMinutes(samples, index, interval) {
-  const current = samples[index].time;
-  const next = samples[index + 1] ? samples[index + 1].time : current + interval * 1000;
-  const gap = Math.max(0, next - current);
-  const creditedGap = samples[index].manual_break ? gap : Math.min(gap, maxCarryMinutes * 60000);
-  return creditedGap / 60000;
+function durationMinutes(samples, index) {
+  return samples[index].minutes;
 }
 
 function renderStatus(payload) {
@@ -145,10 +171,7 @@ function renderWorkingLine(timeline, samples, interval, chartStartHour, chartEnd
     const y = sampleWorking(samples[index]) ? 0 : 100;
     const startX = ((start - chartStart) / chartLength) * 100;
     const endX = ((end - chartStart) / chartLength) * 100;
-    const previousSample = samples[index - 1];
-    const previousStart = previousSample ? previousSample.time : start;
-    const sameManualBreak = samples[index].manual_break_id && samples[index].manual_break_id === previousSample?.manual_break_id;
-    const breakBefore = index > 0 && start - previousStart > maxCarryMinutes * 60000 && !sameManualBreak;
+    const breakBefore = index > 0 && samples[index].gapBefore;
     const previous = segments[segments.length - 1];
     if (previous && !breakBefore && previous.y === y) {
       previous.end = endX;
@@ -213,7 +236,7 @@ function renderHistory(payload) {
   $("daily-estimate-label").textContent = `Working estimate · ${selectedLabel}`;
   $("today-label").textContent = formatters.shortDate.format(selectedDate);
   $("daily-hours-label").textContent = selectedLabel;
-  $("manual-break-tools").hidden = !isSelectedToday;
+  $("manual-break-day").textContent = isSelectedToday ? "today" : formatters.longDay.format(selectedDate);
 
   const samples = payload.days.get(selectedDayKey) || [];
   const minutes = samples.reduce((total, sample, index) => total + (sampleWorking(sample) ? durationMinutes(samples, index, payload.interval) : 0), 0);
@@ -237,7 +260,7 @@ function renderHistory(payload) {
   $("average-hours").textContent = workingDays.length ? formatHours(averageMinutes) : "--";
   $("average-break-hours").textContent = workingDays.length ? formatHours(averageBreakMinutes) : "--";
   $("working-percent").textContent = samples.length ? `${percent}% of observed time` : "Collecting your first signal";
-  $("sample-count").textContent = `${samples.length} samples`;
+  $("sample-count").textContent = `${formatHours(observedMinutes)} h observed`;
   $("working-meter").style.width = `${Math.min(percent, 100)}%`;
   const manualBreaks = samples.filter((sample, index) => sample.paused && !samples[index - 1]?.paused).length;
   $("break-count").textContent = samples.length ? manualBreaks : "--";
@@ -318,8 +341,12 @@ function renderAverageDay(payload) {
   samplesBetween(cutoffTime, endTime).forEach((sample) => {
     const key = sample.day;
     if (!days[key]) days[key] = Array(binsPerDay).fill(null);
-    const bin = Math.floor(localMinute(sample) / binMinutes);
-    days[key][bin] = sampleWorking(sample) ? 1 : 0;
+    // Mark every bin that has a sample in it, as the old per-minute samples did.
+    if (sample.observedEnd < sample.time) return;
+    const value = sampleWorking(sample) ? 1 : 0;
+    const firstBin = Math.floor(localMinute(sample) / binMinutes);
+    const lastBin = Math.min(binsPerDay - 1, Math.floor((localMinute(sample) + (sample.observedEnd - sample.time) / 60000) / binMinutes));
+    for (let bin = firstBin; bin <= lastBin; bin += 1) days[key][bin] = value;
   });
   const dayValues = Object.values(days)
     .filter((day) => day.some((value) => value === 1))
@@ -483,6 +510,7 @@ function timeInputValue(date) {
 }
 
 function setDefaultManualBreakTimes() {
+  if (selectedDayKey !== dayKey(new Date())) return;
   const end = new Date();
   end.setSeconds(0, 0);
   const start = new Date(end.getTime() - 30 * 60000);
@@ -496,7 +524,7 @@ function setManualBreakFormOpen(open) {
   form.hidden = !open;
   $("manual-break-toggle").setAttribute("aria-expanded", String(open));
   if (open) {
-    if (!$("manual-break-start").value) setDefaultManualBreakTimes();
+    if (!$("manual-break-start").value && !$("manual-break-end").value) setDefaultManualBreakTimes();
     $("manual-break-start").focus();
   }
 }
@@ -541,14 +569,16 @@ async function addManualBreak(event) {
   event.preventDefault();
   const message = $("manual-break-message");
   const submit = $("manual-break-form").querySelector("[type=submit]");
-  if (DEMO) { message.textContent = "Demo mode: breaks are not saved."; return; }
+  if (DEMO) { message.textContent = "Demo mode: corrections are not saved."; return; }
+  const kind = $("manual-break-kind").value;
   const [startHour, startMinute] = $("manual-break-start").value.split(":").map(Number);
   const [endHour, endMinute] = $("manual-break-end").value.split(":").map(Number);
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), startHour, startMinute);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endHour, endMinute);
+  // The times are on the day shown in the dashboard.
+  const [year, month, date] = selectedDayKey.split("-").map(Number);
+  const start = new Date(year, month - 1, date, startHour, startMinute);
+  const end = new Date(year, month - 1, date, endHour, endMinute);
   if (start >= end) { message.textContent = "The end time must be after the start time."; return; }
-  if (end > now) { message.textContent = "The break must have ended already."; return; }
+  if (end > new Date()) { message.textContent = "The time range must have ended already."; return; }
 
   submit.disabled = true;
   message.textContent = "Saving…";
@@ -556,16 +586,17 @@ async function addManualBreak(event) {
     const response = await fetch("/api/manual-break", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ start: start.toISOString(), end: end.toISOString() }),
+      body: JSON.stringify({ kind, start: start.toISOString(), end: end.toISOString() }),
     });
     const result = await readJson(response);
-    if (!response.ok) throw new Error(result.error || "Could not save the break.");
-    message.textContent = "Break added for today.";
+    if (!response.ok) throw new Error(result.error || "Could not save the correction.");
+    message.textContent = kind === "break" ? "Break added."
+      : result.break?.changed ? "Marked as not working." : "Nothing was counted as work in that time.";
     $("manual-break-start").value = "";
     $("manual-break-end").value = "";
     await refresh();
   } catch (error) {
-    message.textContent = error.message || "Could not save the break.";
+    message.textContent = error.message || "Could not save the correction.";
   } finally { submit.disabled = false; }
 }
 
@@ -590,12 +621,12 @@ function setupPalettePicker() {
 }
 
 function historyUrl() {
-  const last = historyState.samples.at(-1);
+  const last = historyState.segments.at(-1);
   if (!last || !historyState.revision) return "/api/history";
   return `/api/history?since=${encodeURIComponent(last.timestamp)}&revision=${encodeURIComponent(historyState.revision)}`;
 }
 
-// Fetch only samples newer than the ones already loaded. The server answers
+// Fetch only stretches from the last loaded one on (it may have grown). The server answers
 // with the full history (full: true) when past records changed, e.g. after a
 // manual break, or when this is the first load.
 async function loadHistory() {
@@ -603,20 +634,22 @@ async function loadHistory() {
 }
 
 function applyHistory(payload) {
-  const incoming = prepareSamples(payload.samples);
-  const append = payload.full === false;
-  let samples = append ? historyState.samples.concat(incoming) : incoming;
-  const trimmed = samples.length > historyLimit;
-  if (trimmed) samples = samples.slice(-historyLimit);
-  let { days, workingDays } = historyState;
-  if (append && !trimmed) {
-    addToDayIndex(days, workingDays, incoming);
-  } else {
-    days = new Map();
-    workingDays = new Set();
-    addToDayIndex(days, workingDays, samples);
+  const incoming = prepareSegments(payload.samples);
+  let segments = incoming;
+  if (payload.full === false) {
+    // The first incoming stretch replaces the loaded ones from the same start on.
+    segments = historyState.segments;
+    if (incoming.length) {
+      while (segments.length && segments.at(-1).time >= incoming[0].time) segments.pop();
+      segments = segments.concat(incoming);
+    }
   }
-  historyState = { samples, interval: payload.interval, revision: payload.revision ?? null, days, workingDays };
+  if (segments.length > historyLimit) segments = segments.slice(-historyLimit);
+  const samples = buildSamples(segments, payload.interval);
+  const days = new Map();
+  const workingDays = new Set();
+  addToDayIndex(days, workingDays, samples);
+  historyState = { segments, samples, interval: payload.interval, revision: payload.revision ?? null, days, workingDays };
 }
 
 function render() {

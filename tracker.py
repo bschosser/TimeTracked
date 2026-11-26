@@ -29,8 +29,17 @@ DEFAULT_MAIL_APP = os.getenv("MAIL_APP", "Mail").strip() or "Mail"
 IDLE_MINUTES = float(os.getenv("IDLE_MINUTES", str(4 * 60)))
 HISTORY_LOCK = threading.RLock()
 # Keep in sync with APP_VERSION in app.js; the dashboard footer compares both.
-APP_VERSION = "2026-11-23.1"
+APP_VERSION = "2026-11-26.2"
 HISTORY_LIMIT = 120_960
+# samples.jsonl holds one record per stretch of unchanged state: `timestamp` is when
+# the stretch started and `until` the latest sample that confirmed it. Each sample
+# either moves `until` forward (rewriting only the last line) or, on a state change,
+# appends a new record. A stretch is only extended while samples keep coming; after a
+# longer gap (e.g. the Mac was asleep) a new record starts, so the dashboard still sees
+# the gap and can cap it at four hours.
+MAX_SAMPLE_GAP_SECONDS = max(3 * INTERVAL_SECONDS, 180)
+STATE_KEYS = ("mail_open", "working", "paused", "idle", "signal_app",
+              "manual_break", "manual_break_id", "manual_break_boundary")
 
 # In-memory copy of samples.jsonl so requests don't re-read the whole file.
 # The (mtime, size) stamp detects writes made outside this process; the
@@ -39,6 +48,8 @@ HISTORY_LIMIT = 120_960
 _history_cache: list[dict] = []
 _history_stamp: tuple[int, int] | None = None
 _history_revision = uuid4().hex
+# The most recent raw sample (with idle_seconds), shown as the current status.
+_latest_sample: dict | None = None
 
 
 class ManualBreakError(ValueError):
@@ -142,7 +153,10 @@ def sample() -> dict:
 
 
 def mark_away(records: list[dict], start: datetime, end: datetime) -> int:
-    """Mark samples in [start, end) as not working because nobody was at the computer."""
+    """Mark records starting in [start, end) as not working because nobody was at the computer.
+
+    Split stretches at `start` and `end` first (split_at) so they line up with the edges.
+    """
     changed = 0
     for record in records:
         if start <= history_timestamp(record) < end and not record.get("manual_break"):
@@ -153,29 +167,120 @@ def mark_away(records: list[dict], start: datetime, end: datetime) -> int:
     return changed
 
 
+def record_until(record: dict) -> datetime:
+    return datetime.fromisoformat(record.get("until", record["timestamp"]).replace("Z", "+00:00"))
+
+
+def same_state(a: dict, b: dict) -> bool:
+    return all(a.get(key) == b.get(key) for key in STATE_KEYS)
+
+
+def can_extend(segment: dict, record: dict) -> bool:
+    gap = (history_timestamp(record) - record_until(segment)).total_seconds()
+    return same_state(segment, record) and 0 <= gap <= MAX_SAMPLE_GAP_SECONDS
+
+
+def as_segment(record: dict) -> dict:
+    segment = {key: value for key, value in record.items() if key != "idle_seconds"}
+    segment.setdefault("until", segment["timestamp"])
+    return segment
+
+
+def compact(records: list[dict]) -> list[dict]:
+    """Merge consecutive records with the same state into stretches (also converts old per-sample files)."""
+    result: list[dict] = []
+    for record in records:
+        record = as_segment(record)
+        previous = result[-1] if result else None
+        if previous is not None and can_extend(previous, record):
+            if record_until(record) > record_until(previous):
+                previous["until"] = record["until"]
+        else:
+            result.append(record)
+    return result
+
+
+def split_at(records: list[dict], moment: datetime) -> None:
+    """Split the stretch that covers `moment` so a new record starts exactly there."""
+    if any(history_timestamp(record) == moment for record in records):
+        return
+    for index, record in enumerate(records):
+        if history_timestamp(record) < moment <= record_until(record):
+            tail = dict(record, timestamp=moment.astimezone(timezone.utc).isoformat())
+            tail.pop("manual_break_boundary", None)  # the boundary stays at the stretch's start
+            if not record.get("manual_break"):
+                tail.pop("manual_break_id", None)  # only the inside of a break carries its id
+            record["until"] = tail["timestamp"]
+            records.insert(index + 1, tail)
+            return
+
+
 def append_sample() -> dict:
-    global _history_stamp
+    global _history_stamp, _latest_sample
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with HISTORY_LOCK:
         cache = cached_history()
         record = sample()
+        _latest_sample = record
         previous = cache[-1] if cache else None
         if record["idle"] and previous is not None and not previous.get("idle"):
             # Just crossed the inactivity limit: nobody has been at the computer since the
-            # last input, so take the samples since then off as well (once, on the transition).
-            now = datetime.now(timezone.utc)
+            # last input, so take the time since then off as well (once, on the transition).
+            now = history_timestamp(record)
             records = read_history_file()
-            mark_away(records, now - timedelta(seconds=record.get("idle_seconds", 0)), now + timedelta(days=1))
-            records.append(record)
+            idle_start = now - timedelta(seconds=record.get("idle_seconds", 0))
+            split_at(records, idle_start)
+            mark_away(records, idle_start, now + timedelta(days=1))
+            records.append(as_segment(record))
             write_history(records)
             return record
-        with HISTORY_FILE.open("a", encoding="utf-8") as history:
-            history.write(json.dumps(record) + "\n")
-        cache.append(record)
-        if len(cache) > HISTORY_LIMIT + 1_000:
-            del cache[:-HISTORY_LIMIT]
+        if previous is not None and can_extend(previous, record):
+            previous["until"] = record["timestamp"]
+            if not rewrite_last_line(previous):
+                # The file doesn't end cleanly (e.g. an interrupted write): rewrite it whole.
+                records = read_history_file()
+                if records and records[-1].get("timestamp") == previous["timestamp"]:
+                    records[-1] = previous
+                else:
+                    records.append(previous)
+                write_history(records)
+                return record
+        else:
+            segment = as_segment(record)
+            with HISTORY_FILE.open("a", encoding="utf-8") as history:
+                history.write(json.dumps(segment) + "\n")
+            cache.append(segment)
+            if len(cache) > HISTORY_LIMIT + 1_000:
+                del cache[:-HISTORY_LIMIT]
         _history_stamp = history_file_stamp()
     return record
+
+
+def rewrite_last_line(record: dict) -> bool:
+    """Replace the file's last line with `record`; False if the file doesn't end cleanly."""
+    try:
+        with HISTORY_FILE.open("r+b") as history:
+            size = history.seek(0, os.SEEK_END)
+            if size == 0:
+                return False
+            history.seek(size - 1)
+            if history.read(1) != b"\n":
+                return False
+            position, start = size - 1, 0
+            while position > 0:
+                chunk_start = max(0, position - 4096)
+                history.seek(chunk_start)
+                newline = history.read(position - chunk_start).rfind(b"\n")
+                if newline >= 0:
+                    start = chunk_start + newline + 1
+                    break
+                position = chunk_start
+            history.seek(start)
+            history.truncate()
+            history.write((json.dumps(record) + "\n").encode("utf-8"))
+        return True
+    except OSError:
+        return False
 
 
 def read_history_file() -> list[dict]:
@@ -214,6 +319,7 @@ def cached_history() -> list[dict]:
 
 def write_history(records: list[dict]) -> None:
     global _history_cache, _history_stamp, _history_revision
+    records = compact(records)
     with HISTORY_LOCK:
         with HISTORY_FILE.open("w", encoding="utf-8") as history:
             history.writelines(json.dumps(record) + "\n" for record in records)
@@ -224,12 +330,30 @@ def write_history(records: list[dict]) -> None:
 
 def latest_sample() -> dict | None:
     with HISTORY_LOCK:
+        if _latest_sample is not None:
+            return _latest_sample
         cache = cached_history()
-        return cache[-1] if cache else None
+        if not cache:
+            return None
+        return dict(cache[-1], timestamp=cache[-1].get("until", cache[-1]["timestamp"]))
+
+
+def migrate_history() -> None:
+    """Convert an old file with one line per sample into stretches (keeps a backup)."""
+    with HISTORY_LOCK:
+        records = read_history_file()
+        if not records or all("until" in record for record in records):
+            return
+        backup = HISTORY_FILE.with_name(HISTORY_FILE.name + ".pre-stretches")
+        if not backup.exists():
+            backup.write_bytes(HISTORY_FILE.read_bytes())
+        write_history(records)
+        print(f"Compacted {len(records)} samples into {len(_history_cache)} stretches (backup: {backup.name}).")
 
 
 def history_since(since: str | None, revision: str | None) -> tuple[list[dict], str, bool]:
-    """Samples newer than `since`, or the full history if the client's copy is stale."""
+    """Stretches starting at or after `since` (the client's last one may have grown), or
+    the full history if the client's copy is stale."""
     with HISTORY_LOCK:
         records = cached_history()
         current_revision = _history_revision
@@ -238,7 +362,7 @@ def history_since(since: str | None, revision: str | None) -> tuple[list[dict], 
         try:
             since_time = datetime.fromisoformat(since.replace("Z", "+00:00"))
             start = len(records)
-            while start > 0 and history_timestamp(records[start - 1]) > since_time:
+            while start > 0 and history_timestamp(records[start - 1]) >= since_time:
                 start -= 1
         except (KeyError, TypeError, ValueError):
             return records[-HISTORY_LIMIT:], current_revision, True
@@ -249,7 +373,8 @@ def history_timestamp(record: dict) -> datetime:
     return datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
 
 
-def add_manual_break(start_value: str, end_value: str) -> dict:
+def parse_correction_range(start_value: str, end_value: str) -> tuple[datetime, datetime]:
+    """Validate a past time range sent by the dashboard's correction form."""
     try:
         start = datetime.fromisoformat(start_value.replace("Z", "+00:00"))
         end = datetime.fromisoformat(end_value.replace("Z", "+00:00"))
@@ -257,18 +382,36 @@ def add_manual_break(start_value: str, end_value: str) -> dict:
         raise ManualBreakError("Choose a valid start and end time.") from error
     if start.tzinfo is None or end.tzinfo is None:
         raise ManualBreakError("Choose a valid start and end time.")
-
-    now = datetime.now().astimezone()
     if start >= end:
         raise ManualBreakError("The end time must be after the start time.")
-    if start.astimezone().date() != now.date() or end.astimezone().date() != now.date():
-        raise ManualBreakError("A missed break can only be added for today.")
-    if end > now:
-        raise ManualBreakError("The break must have ended already.")
+    if end > datetime.now().astimezone():
+        raise ManualBreakError("The time range must have ended already.")
+    return start, end
+
+
+def mark_not_working(start_value: str, end_value: str) -> dict:
+    """Take a past time range off (e.g. Mail was left open), like --mark-away."""
+    start, end = parse_correction_range(start_value, end_value)
+    with HISTORY_LOCK:
+        records = read_history_file()
+        records.sort(key=history_timestamp)
+        split_at(records, start)
+        split_at(records, end)
+        changed = mark_away(records, start, end)
+        if changed:
+            write_history(records)
+    return {"start": start.astimezone(timezone.utc).isoformat(), "end": end.astimezone(timezone.utc).isoformat(), "changed": changed}
+
+
+def add_manual_break(start_value: str, end_value: str) -> dict:
+    start, end = parse_correction_range(start_value, end_value)
 
     with HISTORY_LOCK:
         records = read_history_file()
         records.sort(key=history_timestamp)
+        # Stretches can span the break's edges; split them so a record starts at each edge.
+        split_at(records, start)
+        split_at(records, end)
 
         existing_breaks: dict[str, dict[str, datetime]] = {}
         for record in records:
@@ -395,7 +538,10 @@ class Handler(SimpleHTTPRequestHandler):
                 request = json.loads(body or b"{}")
                 if not isinstance(request, dict):
                     raise ManualBreakError("Choose a valid start and end time.")
-                interval = add_manual_break(request.get("start"), request.get("end"))
+                if request.get("kind") == "not_working":
+                    interval = mark_not_working(request.get("start"), request.get("end"))
+                else:
+                    interval = add_manual_break(request.get("start"), request.get("end"))
             except (json.JSONDecodeError, ManualBreakError) as error:
                 self.send_json({"error": str(error) or "Choose a valid start and end time."}, status=400)
                 return
@@ -453,9 +599,11 @@ def mark_away_command(start: datetime, end: datetime) -> None:
         raise SystemExit("The end time must be after the start time.")
     with HISTORY_LOCK:
         records = read_history_file()
+        split_at(records, start)
+        split_at(records, end)
         changed = mark_away(records, start, end)
         write_history(records)
-    print(f"Marked {changed} samples between {start:%a %Y-%m-%d %H:%M} and {end:%a %Y-%m-%d %H:%M} as away (not working).")
+    print(f"Marked {changed} tracked stretches between {start:%a %Y-%m-%d %H:%M} and {end:%a %Y-%m-%d %H:%M} as away (not working).")
 
 
 def main() -> None:
@@ -470,6 +618,7 @@ def main() -> None:
     port = int(os.getenv("PORT", "8765"))
     # Bind first: if another tracker already uses the port, exit before recording anything.
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    migrate_history()
     append_sample()
     threading.Thread(target=sampler_loop, daemon=True).start()
     print(f"Working hours tracker running at http://127.0.0.1:{port}")

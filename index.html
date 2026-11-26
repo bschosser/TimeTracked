@@ -44,7 +44,7 @@
         <div class="panel-kicker" id="daily-estimate-label">Working estimate · today</div>
         <div class="score-row"><strong id="working-hours">--</strong><span>hours</span></div>
         <div class="meter"><span id="working-meter"></span></div>
-        <div class="score-foot"><span id="working-percent">Collecting your first signal</span><span id="sample-count">-- samples</span></div>
+        <div class="score-foot"><span id="working-percent">Collecting your first signal</span><span id="sample-count">-- h observed</span></div>
       </article>
       <article class="signals-panel">
         <div class="panel-kicker">Right now</div>
@@ -89,12 +89,13 @@
 
     <section class="break-section"><div><p class="eyebrow">Breathing room</p><h2>Breaks are part of the record.</h2></div><div class="break-stat"><strong id="break-count">--</strong><span>manual pauses<br>today</span></div></section>
     <section class="manual-break-tools" id="manual-break-tools">
-      <button id="manual-break-toggle" class="manual-break-toggle" type="button" aria-expanded="false" aria-controls="manual-break-form">Add a missed break</button>
+      <button id="manual-break-toggle" class="manual-break-toggle" type="button" aria-expanded="false" aria-controls="manual-break-form">Correct a time range</button>
       <form id="manual-break-form" class="manual-break-form" hidden>
-        <p>Record a break for today</p>
+        <p>Correct <span id="manual-break-day">today</span></p>
+        <label for="manual-break-kind">Mark as <select id="manual-break-kind"><option value="break">Break</option><option value="not_working">Not working</option></select></label>
         <label for="manual-break-start">From <input id="manual-break-start" type="time" required></label>
         <label for="manual-break-end">To <input id="manual-break-end" type="time" required></label>
-        <button class="manual-break-submit" type="submit">Save break</button>
+        <button class="manual-break-submit" type="submit">Save</button>
         <button id="manual-break-cancel" class="manual-break-cancel" type="button">Cancel</button>
         <span id="manual-break-message" role="status" aria-live="polite"></span>
       </form>
